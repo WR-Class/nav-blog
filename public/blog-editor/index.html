@@ -288,45 +288,134 @@ async function save() {
   finally { $('#saveBtn').disabled = false; }
 }
 
-// ---------- 重新翻译 ----------
+// ---------- 重新翻译（前端驱动分段翻译，避免后端 30s 超时）----------
+async function translateBodyFrontend(text, onProgress) {
+  // 按代码块分割，代码块不翻译
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  const toTranslate = [];
+  const structure = [];
+
+  parts.forEach(part => {
+    if (part.startsWith('```')) {
+      structure.push({ type: 'code', text: part });
+    } else {
+      const lines = part.split('\n');
+      const lineInfo = lines.map(line => {
+        const hasChinese = /[\u4e00-\u9fff]/.test(line);
+        const isTableSep = /^\s*\|[\s:|-]+\|?\s*$/.test(line);
+        const shouldTranslate = hasChinese && !isTableSep && line.trim();
+        if (shouldTranslate) toTranslate.push(line);
+        return { text: line, translate: shouldTranslate };
+      });
+      structure.push({ type: 'text', lines: lineInfo });
+    }
+  });
+
+  const total = toTranslate.length;
+  if (total === 0) return text;
+
+  // 分批翻译，每批 6 行
+  const results = new Array(total);
+  const batchSize = 6;
+  for (let i = 0; i < total; i += batchSize) {
+    const batch = toTranslate.slice(i, i + batchSize);
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts: batch, to: 'en' }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        for (let j = 0; j < batch.length; j++) {
+          results[i + j] = (d.translations && d.translations[j]) || batch[j];
+        }
+      } else {
+        for (let j = 0; j < batch.length; j++) results[i + j] = batch[j];
+      }
+    } catch {
+      for (let j = 0; j < batch.length; j++) results[i + j] = batch[j];
+    }
+    if (onProgress) onProgress(Math.min(i + batchSize, total), total);
+  }
+
+  // 重新组装
+  let idx = 0;
+  return structure.map(part => {
+    if (part.type === 'code') return part.text;
+    return part.lines.map(line => {
+      if (line.translate) return results[idx++] || line.text;
+      return line.text;
+    }).join('\n');
+  }).join('');
+}
+
 async function retranslate() {
   if (!current) { msg('请先选择要重新翻译的文章'); return; }
   if (!confirm('确认重新翻译「' + current.title + '」的英文版本？\n\n翻译过程可能需要 30-60 秒，请耐心等待。\n翻译期间请勿关闭页面。')) return;
 
   const btn = $('#retranslateBtn');
   const originalText = btn.innerHTML;
-  let elapsed = 0;
-  let timer = null;
 
   try {
     btn.disabled = true;
     btn.classList.add('animate-pulse');
-    btn.innerHTML = '🌐 翻译中…';
 
-    // 实时计时器：每秒更新按钮和消息
-    timer = setInterval(() => {
-      elapsed++;
-      btn.innerHTML = `🌐 翻译中… (${elapsed}s)`;
-      msg(`正在重新翻译「${current.title}」，已用时 ${elapsed} 秒，请耐心等待…`, 'loading');
-    }, 1000);
+    // 步骤 1：标记翻译中
+    btn.innerHTML = '🌐 准备中…';
+    msg('正在准备翻译…', 'loading');
 
-    msg(`正在重新翻译「${current.title}」，请耐心等待…`, 'loading');
+    // 步骤 2：前端分段翻译正文
+    const body = current.body || editor.getMarkdown();
+    const bodyEn = await translateBodyFrontend(body, (done, total) => {
+      btn.innerHTML = `🌐 翻译中… (${done}/${total})`;
+      msg(`正在翻译正文 ${done}/${total} 段，请耐心等待…`, 'loading');
+    });
 
-    const res = await fetch('/api/blog', {
+    // 步骤 3：翻译标题和摘要
+    btn.innerHTML = '🌐 翻译标题…';
+    msg('正在翻译标题和摘要…', 'loading');
+    let titleEn = current.title;
+    let snippetEn = current.snippet;
+    const shortTexts = [current.title, current.snippet].filter(s => s && /[\u4e00-\u9fff]/.test(s));
+    if (shortTexts.length > 0) {
+      try {
+        const res = await fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texts: shortTexts, to: 'en' }),
+        });
+        if (res.ok) {
+          const d = await res.json();
+          let si = 0;
+          if (current.title && /[\u4e00-\u9fff]/.test(current.title)) titleEn = d.translations[si++] || current.title;
+          if (current.snippet && /[\u4e00-\u9fff]/.test(current.snippet)) snippetEn = d.translations[si++] || current.snippet;
+        }
+      } catch {}
+    }
+
+    // 步骤 4：保存翻译结果
+    btn.innerHTML = '🌐 保存中…';
+    msg('正在保存翻译结果…', 'loading');
+    const saveRes = await fetch('/api/blog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
-      body: JSON.stringify({ action: 'retranslate', slug: current.slug }),
+      body: JSON.stringify({
+        action: 'save-translation',
+        slug: current.slug,
+        bodyEn,
+        titleEn,
+        snippetEn,
+      }),
     });
-    clearInterval(timer);
-
-    const d = await res.json();
-    if (!res.ok) throw Error(d.error || '翻译失败');
+    const d = await saveRes.json();
+    if (!saveRes.ok) throw Error(d.error || '保存失败');
 
     const trStatus = d.translationStatus || 'complete';
     const statusText = trStatus === 'complete' ? '✅ 翻译完整（无残留中文）'
       : trStatus === 'partial' ? '⚠️ 翻译部分完成（仍有少量中文残留）'
       : '❌ 翻译失败';
-    msg(`重新翻译完成！${statusText}（用时 ${elapsed} 秒）`, true);
+    msg(`重新翻译完成！${statusText}`, true);
     showTrStatus(trStatus);
     if (d.post && d.post.bodyEn) {
       $('#enEditor').value = d.post.bodyEn;
@@ -334,47 +423,8 @@ async function retranslate() {
     }
     await loadPosts();
   } catch (e) {
-    if (timer) clearInterval(timer);
-    // 请求可能超时（Cloudflare 30s 限制），但翻译可能在后台完成
-    // 新代码先标记 pending 再翻译，所以博文状态已经更新
-    msg('翻译请求超时，正在检查翻译是否已完成…', 'loading');
-    await new Promise(r => setTimeout(r, 3000));
-
-    // 轮询检查翻译结果（最多再等 60 秒）
-    for (let i = 0; i < 12; i++) {
-      try {
-        const checkRes = await fetch('/api/blog?slug=' + encodeURIComponent(current.slug), {
-          headers: { 'Authorization': 'Bearer ' + PASSWORD }
-        });
-        if (checkRes.ok) {
-          const checkData = await checkRes.json();
-          const p = checkData.post;
-          if (p && p.translationStatus && p.translationStatus !== 'pending') {
-            // 翻译已完成（不管成功还是部分）
-            const trStatus = p.translationStatus;
-            const statusText = trStatus === 'complete' ? '✅ 翻译完整（无残留中文）'
-              : trStatus === 'partial' ? '⚠️ 翻译部分完成（仍有少量中文残留）'
-              : '❌ 翻译未完成';
-            msg(`重新翻译完成！${statusText}（用时 ${elapsed + (i + 1) * 5} 秒）`, true);
-            showTrStatus(trStatus);
-            if (p.bodyEn) {
-              $('#enEditor').value = p.bodyEn;
-              $('#enSection').classList.remove('hidden');
-            }
-            await loadPosts();
-            return;
-          }
-          // 仍在 pending，继续等待
-          msg(`翻译仍在进行中…已用时 ${elapsed + (i + 1) * 5} 秒，继续等待…`, 'loading');
-        }
-      } catch {}
-      await new Promise(r => setTimeout(r, 5000));
-    }
-
-    // 超时仍未完成
-    msg('翻译超时：请求已超过 ' + (elapsed + 60) + ' 秒。翻译可能仍在后台进行，请稍后刷新文章列表查看翻译状态。');
-  }
-  finally {
+    msg('翻译失败：' + e.message);
+  } finally {
     btn.disabled = false;
     btn.classList.remove('animate-pulse');
     btn.innerHTML = originalText;

@@ -112,6 +112,23 @@ export async function onRequest(context) {
       return json({ ok: true, post, translationStatus: post.translationStatus });
     }
 
+    // 保存前端翻译结果（前端驱动翻译，避免后端 30s 超时）
+    if (body.action === "save-translation") {
+      const sSlug = String(body.slug || "").trim();
+      if (!sSlug) return json({ error: "缺少 slug" }, 400);
+      const raw = await env.NAV_DB.get(POST_PREFIX + sSlug);
+      if (!raw) return json({ error: "文章不存在" }, 404);
+      const post = JSON.parse(raw);
+      post.bodyEn = String(body.bodyEn || "");
+      post.titleEn = String(body.titleEn || post.title);
+      post.snippetEn = String(body.snippetEn || post.snippet);
+      post.translationStatus = checkTranslationStatus(post.body, post.bodyEn);
+      post.updatedAt = Date.now();
+      await env.NAV_DB.put(POST_PREFIX + sSlug, JSON.stringify(post));
+      await upsertIndex(env, post);
+      return json({ ok: true, post, translationStatus: post.translationStatus });
+    }
+
     // 保存/更新
     const slug2 = String(body.slug || "").trim().replace(/[^\w\-\u4e00-\u9fff]+/g, "-");
     if (!slug2) return json({ error: "缺少 slug" }, 400);
@@ -362,7 +379,8 @@ async function translateOne(text, from, to, env) {
   if (!text || !/[\u4e00-\u9fff]/.test(text)) return text;
 
   // 查缓存（v6: 新缓存版本，废弃 v5 旧缓存）
-  const provider = env.DEEPL_API_KEY ? "deepl" : "google";
+  const hasDeepL = !!(env.DEEPL_API_KEYS || env.DEEPL_API_KEY);
+  const provider = hasDeepL ? "deepl" : "google";
   const cacheKey = `tr:v6:${provider}:${to}:${text.trim()}`;
   if (env.NAV_DB) {
     try {
@@ -379,12 +397,17 @@ async function translateOne(text, from, to, env) {
 
   let result = null;
 
-  // 优先 DeepL
-  if (env.DEEPL_API_KEY) {
+  // 解析 DeepL Keys：优先 DEEPL_API_KEYS（逗号分隔），回退 DEEPL_API_KEY（单个）
+  const deeplKeys = env.DEEPL_API_KEYS
+    ? env.DEEPL_API_KEYS.split(",").map(k => k.trim()).filter(Boolean)
+    : (env.DEEPL_API_KEY ? [env.DEEPL_API_KEY] : []);
+
+  // 优先 DeepL（多 Key 轮换）
+  if (deeplKeys.length > 0) {
     try {
-      result = await deeplTranslate(processed, from, to, env.DEEPL_API_KEY);
+      result = await deeplTranslate(processed, from, to, deeplKeys);
     } catch (e) {
-      // DeepL 失败，回退到 Google
+      // DeepL 全部 Key 失败，回退到 Google
     }
   }
 
@@ -406,15 +429,26 @@ async function translateOne(text, from, to, env) {
   return result;
 }
 
-async function deeplTranslate(text, from, to, apiKey) {
-  const res = await fetch("https://api-free.deepl.com/v2/translate", {
-    method: "POST",
-    headers: { Authorization: "DeepL-Auth-Key " + apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ text: [text], source_lang: from.toUpperCase(), target_lang: to.toUpperCase() }),
-  });
-  if (!res.ok) throw new Error("DeepL HTTP " + res.status);
-  const data = await res.json();
-  return data.translations?.[0]?.text || text;
+async function deeplTranslate(text, from, to, apiKeys) {
+  const keys = Array.isArray(apiKeys) ? apiKeys : [apiKeys];
+  // 逐个 Key 尝试，403/429（额度用完/限流）自动切下一个
+  for (const key of keys) {
+    const deeplUrl = key.endsWith(":fx")
+      ? "https://api-free.deepl.com/v2/translate"
+      : "https://api-pro.deepl.com/v2/translate";
+    try {
+      const res = await fetch(deeplUrl, {
+        method: "POST",
+        headers: { Authorization: "DeepL-Auth-Key " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: [text], source_lang: from.toUpperCase(), target_lang: to.toUpperCase() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.translations?.[0]?.text || text;
+      }
+    } catch {}
+  }
+  throw new Error("所有 DeepL Key 均失败");
 }
 
 async function googleTranslate(text, from, to) {

@@ -45,7 +45,8 @@ export async function onRequest(context) {
 
       // v2：旧版本曾把长段落翻译失败结果缓存下来，升级版本号强制重新翻译。
       // Separate caches by provider so old Google results do not hide a newly configured DeepL key.
-      const provider = env.DEEPL_API_KEY ? "deepl" : "google";
+      const hasDeepL = !!(env.DEEPL_API_KEYS || env.DEEPL_API_KEY);
+      const provider = hasDeepL ? "deepl" : "google";
       const cacheKey = `tr:v4:${provider}:${to}:${trimmed}`;
 
       // 1. 查 KV 缓存
@@ -59,11 +60,20 @@ export async function onRequest(context) {
         } catch { /* 忽略缓存读取错误 */ }
       }
 
-      // 2. 调用 Google 免费翻译
+      // 2. 调用翻译：DeepL 多 Key 轮换，全部失败回退 Google
       try {
-        const result = env.DEEPL_API_KEY
-          ? await deeplTranslate(trimmed, from, to, env.DEEPL_API_KEY)
-          : await googleTranslate(trimmed, from, to);
+        // 解析 DeepL Keys：优先 DEEPL_API_KEYS（逗号分隔），回退 DEEPL_API_KEY（单个）
+        const deeplKeys = env.DEEPL_API_KEYS
+          ? env.DEEPL_API_KEYS.split(',').map(k => k.trim()).filter(Boolean)
+          : (env.DEEPL_API_KEY ? [env.DEEPL_API_KEY] : []);
+
+        let result = null;
+        if (deeplKeys.length > 0) {
+          try { result = await deeplTranslate(trimmed, from, to, deeplKeys); } catch {}
+        }
+        if (!result || result === text) {
+          result = await googleTranslate(trimmed, from, to);
+        }
         const out = result || text;
         map.set(text, out);
         // 3. 写回 KV（不阻塞返回也行，但这里 await 保证下次命中）
@@ -79,20 +89,35 @@ export async function onRequest(context) {
   );
 
   const translations = texts.map((t) => map.get(t) ?? t);
-  return json({ translations, provider: env.DEEPL_API_KEY ? "deepl" : "google" });
+  return json({ translations, provider: (env.DEEPL_API_KEYS || env.DEEPL_API_KEY) ? "deepl" : "google" });
 }
 
-async function deeplTranslate(text, from, to, apiKey) {
+async function deeplTranslate(text, from, to, apiKeys) {
+  const keys = Array.isArray(apiKeys) ? apiKeys : [apiKeys];
   const pieces = text.match(/[\u4e00-\u9fff]+|[^\u4e00-\u9fff]+/g) || [text];
   const out = [];
   for (const piece of pieces) {
     if (!/[\u4e00-\u9fff]/.test(piece)) { out.push(piece); continue; }
-    const res = await fetch('https://api-free.deepl.com/v2/translate', {
-      method: 'POST', headers: {'Authorization': 'DeepL-Auth-Key ' + apiKey, 'Content-Type': 'application/json'},
-      body: JSON.stringify({text: [piece], source_lang: from.toUpperCase(), target_lang: to.toUpperCase()})
-    });
-    if (!res.ok) throw new Error('DeepL HTTP ' + res.status);
-    const data = await res.json(); out.push(data.translations?.[0]?.text || piece);
+    let translated = null;
+    // 逐个 Key 尝试，403/429（额度用完/限流）自动切下一个
+    for (const key of keys) {
+      const deeplUrl = key.endsWith(':fx')
+        ? 'https://api-free.deepl.com/v2/translate'
+        : 'https://api-pro.deepl.com/v2/translate';
+      try {
+        const res = await fetch(deeplUrl, {
+          method: 'POST', headers: {'Authorization': 'DeepL-Auth-Key ' + key, 'Content-Type': 'application/json'},
+          body: JSON.stringify({text: [piece], source_lang: from.toUpperCase(), target_lang: to.toUpperCase()})
+        });
+        if (res.ok) {
+          const data = await res.json();
+          translated = data.translations?.[0]?.text || piece;
+          break; // 成功，无需尝试下一个 Key
+        }
+      } catch {}
+    }
+    if (!translated) throw new Error('所有 DeepL Key 均失败');
+    out.push(translated);
   }
   return out.join('');
 }
