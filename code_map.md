@@ -43,6 +43,13 @@
 | `verify.js` | `/api/verify` | POST | 密码校验（登录用） |
 | `track.js` | `/api/track` | POST | 访问统计埋点 |
 | `go.js` | `/api/go` | GET | 链接跳转（统计点击） |
+| `domain-stats.js` | `/api/domain-stats` | GET | 域名访问统计查看（需密码） |
+
+## Middleware（functions/）
+
+| 文件 | 作用 | 说明 |
+|------|------|------|
+| `_middleware.js` | 域名级拦截 | `wurong.bot.cd` 访问时显示"站点已转移"提示页，5秒后跳转到 `wurong.cc.cd`；API/静态资源直接302跳转；访问量记录到KV |
 
 ## KV 数据结构
 
@@ -55,6 +62,7 @@
 | `tr:v5:<provider>:en:<text>` | string | 翻译缓存 |
 | `settings` | JSON | 网站设置 |
 | `stats:*` | JSON | 访问统计数据 |
+| `stats:domain_visits` | JSON | 旧域名(wurong.bot.cd)访问统计（总量/每日/最后访问时间） |
 
 ## 博客文章数据结构（blog:post:<slug>）
 
