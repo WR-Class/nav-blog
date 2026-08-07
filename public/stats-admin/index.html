@@ -115,6 +115,14 @@
         <div id="content" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-center"></div>
       </div>
 
+      <!-- 域名访问统计 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <h2 class="font-bold text-slate-800 mb-3">🌐 域名访问统计</h2>
+        <div id="domainStats" class="space-y-3">
+          <p class="text-slate-400 text-sm">加载中…</p>
+        </div>
+      </div>
+
       <p class="text-xs text-slate-400">
         说明：统计基于前台页面埋点，独立访客(UV)按「每设备每天」判定，会话(SV)按浏览器会话判定，均为近似值；日期分界和活跃时段均按北京时间（UTC+8）。数据保留约 120 天。后台页面不计入统计。
       </p>
@@ -225,6 +233,59 @@
       renderDevices(d.devices);
       renderHours(d.hours);
       renderContent(d.content);
+      loadDomainStats();  // 加载域名访问统计
+    }
+
+    async function loadDomainStats() {
+      try {
+        const res = await fetch('/api/domain-stats', { headers: { 'Authorization': 'Bearer ' + PASSWORD } });
+        if (!res.ok) { $('#domainStats').innerHTML = '<p class="text-slate-400 text-sm">暂无数据</p>'; return; }
+        const d = await res.json();
+        const stats = d.stats || {};
+        const box = $('#domainStats');
+        const domains = Object.entries(stats);
+
+        if (!domains.length) {
+          box.innerHTML = '<p class="text-slate-400 text-sm">暂无旧域名访问记录（wurong.bot.cd 的访问会在此统计）</p>';
+          return;
+        }
+
+        box.innerHTML = domains.map(([domain, data]) => {
+          const today = new Date().toISOString().slice(0, 10);
+          const todayCount = (data.daily && data.daily[today]) || 0;
+          // 最近 7 天
+          const last7 = [];
+          for (let i = 6; i >= 0; i--) {
+            const dt = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+            last7.push({ date: dt, count: (data.daily && data.daily[dt]) || 0 });
+          }
+          const max7 = Math.max(1, ...last7.map(x => x.count));
+          const bars = last7.map(x => {
+            const h = Math.round(x.count / max7 * 100);
+            return '<div class="flex-1 flex flex-col items-center justify-end h-16" title="' + x.date + ': ' + x.count + ' 次">' +
+              '<div class="w-full bg-orange-400 rounded-t" style="height:' + h + '%"></div>' +
+              '<span class="text-[9px] text-slate-400 mt-0.5">' + x.date.slice(5) + '</span>' +
+            '</div>';
+          }).join('');
+          const lastVisit = data.lastVisit ? new Date(data.lastVisit).toLocaleString('zh-CN') : '无';
+          return '<div class="border border-slate-200 rounded-lg p-3">' +
+            '<div class="flex justify-between items-center mb-2">' +
+              '<div><span class="font-semibold text-slate-700">' + esc(domain) + '</span>' +
+              ' <span class="text-xs text-slate-400">（已停用 → wurong.cc.cd）</span></div>' +
+              '<span class="text-xs text-slate-400">最后访问：' + lastVisit + '</span>' +
+            '</div>' +
+            '<div class="grid grid-cols-3 gap-3 mb-3">' +
+              '<div class="bg-slate-50 rounded-lg p-2 text-center"><div class="text-lg font-bold text-slate-800">' + num(data.total || 0) + '</div><div class="text-xs text-slate-500">总访问量</div></div>' +
+              '<div class="bg-slate-50 rounded-lg p-2 text-center"><div class="text-lg font-bold text-orange-600">' + num(todayCount) + '</div><div class="text-xs text-slate-500">今日访问</div></div>' +
+              '<div class="bg-slate-50 rounded-lg p-2 text-center"><div class="text-lg font-bold text-slate-800">' + Object.keys(data.daily || {}).length + '</div><div class="text-xs text-slate-500">活跃天数</div></div>' +
+            '</div>' +
+            '<div class="text-xs text-slate-500 mb-1">最近 7 天趋势</div>' +
+            '<div class="flex items-end gap-1 h-20">' + bars + '</div>' +
+          '</div>';
+        }).join('');
+      } catch {
+        $('#domainStats').innerHTML = '<p class="text-slate-400 text-sm">加载失败</p>';
+      }
     }
 
     function renderTrend(daily) {
