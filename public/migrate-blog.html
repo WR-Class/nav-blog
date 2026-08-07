@@ -23,6 +23,11 @@
       <label class="block text-sm font-medium mb-1">分支</label>
       <input id="branch" class="w-full border rounded-lg px-3 py-2" value="main">
     </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">GitHub Token（可选，防止 API 限流 403）</label>
+      <input id="ghtoken" type="password" class="w-full border rounded-lg px-3 py-2" placeholder="ghp_xxx...（在 GitHub Settings → Developer settings → Tokens 生成）">
+      <p class="text-xs text-slate-400 mt-1">不填也行，但可能遇到 403 限流。Token 只用于本次迁移，不会保存。</p>
+    </div>
     <button id="migrateBtn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-semibold">开始迁移</button>
   </div>
 
@@ -83,8 +88,11 @@ function parseMd(raw) {
   return { meta, body };
 }
 
+let GH_TOKEN = '';
 async function ghGet(path) {
-  const res = await fetch('https://api.github.com' + path);
+  const headers = {};
+  if (GH_TOKEN) headers['Authorization'] = 'Bearer ' + GH_TOKEN;
+  const res = await fetch('https://api.github.com' + path, { headers });
   if (!res.ok) throw Error('GitHub API ' + res.status);
   return res.json();
 }
@@ -93,6 +101,7 @@ $('#migrateBtn').onclick = async () => {
   const pwd = $('#pwd').value.trim();
   const repo = $('#repo').value.trim() || OWNER_REPO_DEFAULT;
   const branch = $('#branch').value.trim() || 'main';
+  GH_TOKEN = $('#ghtoken').value.trim();
   if (!pwd) { alert('请输入管理密码'); return; }
 
   $('#migrateBtn').disabled = true;
