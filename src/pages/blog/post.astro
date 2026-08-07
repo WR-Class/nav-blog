@@ -105,12 +105,42 @@ import Container from "@/components/container.astro";
 
       // 英文内容
       const hasEn = post.bodyEn && post.bodyEn.trim();
+      const hasChinese = s => /[\u4e00-\u9fff]/.test(s || '');
       const categoryEn = { '工具调用': 'Tools', '技术折腾': 'Tech', '建站笔记': 'Web Notes', '生活碎碎念': 'Life', '未分类': 'Uncategorized' };
       document.getElementById('category-en').textContent = categoryEn[post.category] || post.category || '';
-      document.getElementById('title-en').textContent = post.titleEn || post.title || '';
+
+      // 标题：titleEn 不含中文才用，否则用中文原文并稍后实时翻译
+      const enTitle = !hasChinese(post.titleEn) ? (post.titleEn || post.title) : post.title;
+      document.getElementById('title-en').textContent = enTitle;
+
+      // 作者：含中文则稍后实时翻译
       document.getElementById('author-en').textContent = post.author || '';
       document.getElementById('date-en').textContent = formatDate(post.publishDate, 'en');
       document.getElementById('tags-en').innerHTML = (post.tags || []).map(t => '<span class="text-sm text-gray-500">#' + esc(t) + '</span>').join('');
+
+      // 实时翻译仍含中文的标题和作者
+      if (hasChinese(enTitle) || hasChinese(post.author)) {
+        const shortTexts = [enTitle, post.author].filter(s => s && hasChinese(s));
+        if (shortTexts.length) {
+          fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texts: shortTexts, to: 'en' }),
+          }).then(r => r.ok ? r.json() : null).then(d => {
+            if (!d || !d.translations) return;
+            let si = 0;
+            if (hasChinese(enTitle)) {
+              const t = d.translations[si++] || enTitle;
+              document.getElementById('title-en').textContent = t;
+              if (loadedPost) loadedPost.titleEn = t;
+            }
+            if (hasChinese(post.author)) {
+              const t = d.translations[si++] || post.author;
+              document.getElementById('author-en').textContent = t;
+            }
+          }).catch(() => {});
+        }
+      }
 
       // 根据翻译状态显示不同内容
       const trStatus = post.translationStatus || (hasEn ? 'complete' : 'none');
@@ -137,7 +167,7 @@ import Container from "@/components/container.astro";
 
       // 更新页面标题（根据当前语言选择中英文标题）
       loadedPost = post;
-      const pageTitle = currentLang() === 'en' ? (post.titleEn || post.title) : post.title;
+      const pageTitle = currentLang() === 'en' ? enTitle : post.title;
       document.title = (pageTitle || '博客文章') + ' | 吾荣小屋';
 
       document.getElementById('loading').classList.add('hidden');
@@ -173,7 +203,8 @@ import Container from "@/components/container.astro";
     // 同步更新页面标题
     if (loadedPost) {
       const lang = currentLang();
-      const pageTitle = lang === 'en' ? (loadedPost.titleEn || loadedPost.title) : loadedPost.title;
+      const enTitleEl = document.getElementById('title-en');
+      const pageTitle = lang === 'en' ? (enTitleEl ? enTitleEl.textContent : loadedPost.title) : loadedPost.title;
       document.title = (pageTitle || '博客文章') + ' | 吾荣小屋';
     }
   });

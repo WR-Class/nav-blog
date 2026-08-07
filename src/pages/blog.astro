@@ -36,6 +36,7 @@ import Sectionhead from "@/components/sectionhead.astro";
   }
 
   let postsCache = null;
+  const hasChinese = s => /[\u4e00-\u9fff]/.test(s || '');
 
   function render(posts) {
     const en = currentLang() === 'en';
@@ -49,8 +50,10 @@ import Sectionhead from "@/components/sectionhead.astro";
     }
     empty.classList.add('hidden');
     list.innerHTML = posts.map((p, index) => {
-      const title = en ? (p.titleEn || p.title) : p.title;
-      const snippet = en ? (p.snippetEn || p.snippet) : p.snippet;
+      // 英文模式下：titleEn 不含中文才用，否则用中文原文（稍后实时翻译）
+      const title = en ? (!hasChinese(p.titleEn) ? p.titleEn : p.title) : p.title;
+      const snippet = en ? (!hasChinese(p.snippetEn) ? p.snippetEn : p.snippet) : p.snippet;
+      const needTr = en && (hasChinese(title) || hasChinese(snippet));
       const imgSrc = p.image && p.image.src ? p.image.src : '';
       const imgAlt = p.image && p.image.alt ? p.image.alt : '';
       const imgHtml = imgSrc
@@ -61,17 +64,18 @@ import Sectionhead from "@/components/sectionhead.astro";
         : '';
       const categoryEn = { '工具调用': 'Tools', '技术折腾': 'Tech', '建站笔记': 'Web Notes', '生活碎碎念': 'Life', '未分类': 'Uncategorized' };
       const category = en ? (categoryEn[p.category] || p.category) : p.category;
+      const author = en ? (hasChinese(p.author) ? p.author : p.author) : p.author;
       return `
-        <li>
+        <li data-slug="${esc(p.slug)}" data-need-tr="${needTr ? '1' : '0'}">
           <a href="/blog/post/?slug=${encodeURIComponent(p.slug)}">
             <div class="grid md:grid-cols-2 gap-5 md:gap-10 items-center">
               ${imgHtml}
               <div>
                 <span class="text-blue-400 uppercase tracking-wider text-sm font-medium">${esc(category)}</span>
-                <h2 class="text-3xl font-semibold leading-snug tracking-tight mt-1">${esc(title)}</h2>
-                ${snippet ? `<p class="text-slate-500 mt-2 line-clamp-2">${esc(snippet)}</p>` : ''}
+                <h2 class="text-3xl font-semibold leading-snug tracking-tight mt-1" data-field="title">${esc(title)}</h2>
+                ${snippet ? `<p class="text-slate-500 mt-2 line-clamp-2" data-field="snippet">${esc(snippet)}</p>` : ''}
                 <div class="flex gap-2 mt-3">
-                  <span class="text-gray-400">${esc(p.author)}</span>
+                  <span class="text-gray-400" data-field="author">${esc(author)}</span>
                   <span class="text-gray-400">•</span>
                   <time class="text-gray-400">${dateStr}</time>
                 </div>
@@ -80,6 +84,48 @@ import Sectionhead from "@/components/sectionhead.astro";
           </a>
         </li>`;
     }).join('');
+
+    // 英文模式下：对仍含中文的标题/摘要/作者实时翻译
+    if (en) translateListFields();
+  }
+
+  // 实时翻译列表中仍含中文的字段
+  async function translateListFields() {
+    const items = document.querySelectorAll('#blogList li[data-need-tr="1"]');
+    if (!items.length) return;
+
+    // 收集所有需要翻译的文本（去重）
+    const texts = [];
+    const textMap = new Map(); // text -> [{li, field}]
+    items.forEach(li => {
+      ['title', 'snippet', 'author'].forEach(field => {
+        const el = li.querySelector(`[data-field="${field}"]`);
+        if (el && hasChinese(el.textContent)) {
+          const t = el.textContent.trim();
+          if (!textMap.has(t)) { textMap.set(t, []); texts.push(t); }
+          textMap.get(t).push({ el, field });
+        }
+      });
+    });
+
+    if (!texts.length) return;
+
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts, to: 'en' }),
+      });
+      if (!res.ok) return;
+      const d = await res.json();
+      const translations = d.translations || [];
+      texts.forEach((t, i) => {
+        const tr = translations[i] || t;
+        if (tr && tr !== t) {
+          textMap.get(t).forEach(({ el }) => { el.textContent = tr; });
+        }
+      });
+    } catch {}
   }
 
   async function loadAndRender() {
