@@ -63,7 +63,7 @@ import Sectionhead from "@/components/sectionhead.astro";
       const category = en ? (categoryEn[p.category] || p.category) : p.category;
       return `
         <li>
-          <a href="/blog/post?slug=${encodeURIComponent(p.slug)}">
+          <a href="/blog/post/?slug=${encodeURIComponent(p.slug)}">
             <div class="grid md:grid-cols-2 gap-5 md:gap-10 items-center">
               ${imgHtml}
               <div>

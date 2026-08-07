@@ -5,10 +5,10 @@ import Container from "@/components/container.astro";
 
 <Layout title="博客文章">
   <Container>
-    <div id="loading" class="text-center text-slate-400 py-20">正在加载…</div>
+    <div id="loading" class="text-center text-slate-400 py-20" data-i18n="正在加载…|Loading…">正在加载…</div>
     <div id="errorBox" class="hidden text-center py-20">
-      <p class="text-slate-500 text-lg mb-4">文章加载失败或不存在</p>
-      <a href="/blog" class="text-blue-500 hover:underline">← 返回博客列表</a>
+      <p class="text-slate-500 text-lg mb-4" data-i18n="文章加载失败或不存在|Article failed to load or does not exist">文章加载失败或不存在</p>
+      <a href="/blog" class="text-blue-500 hover:underline" data-i18n="← 返回博客列表|← Back to blog">← 返回博客列表</a>
     </div>
     <article id="article" class="hidden mx-auto max-w-3xl mt-14">
       <!-- 中文版 -->
@@ -38,7 +38,7 @@ import Container from "@/components/container.astro";
         <div id="body-en" class="mx-auto prose prose-lg mt-6 max-w-3xl"></div>
       </div>
       <div class="text-center mt-8">
-        <a href="/blog" class="bg-gray-100 px-5 py-3 rounded-md hover:bg-gray-200 transition">← 返回博客列表</a>
+        <a href="/blog" class="bg-gray-100 px-5 py-3 rounded-md hover:bg-gray-200 transition" data-i18n="← 返回博客列表|← Back to blog">← 返回博客列表</a>
       </div>
     </article>
   </Container>
