@@ -82,6 +82,8 @@ import Container from "@/components/container.astro";
     } catch { return dateStr; }
   }
 
+  let loadedPost = null;
+
   async function loadPost() {
     const slug = getSlug();
     if (!slug) { showError(); return; }
@@ -133,8 +135,10 @@ import Container from "@/components/container.astro";
         applyLang();
       }
 
-      // 更新页面标题
-      document.title = (post.title || '博客文章') + ' | 吾荣小屋';
+      // 更新页面标题（根据当前语言选择中英文标题）
+      loadedPost = post;
+      const pageTitle = currentLang() === 'en' ? (post.titleEn || post.title) : post.title;
+      document.title = (pageTitle || '博客文章') + ' | 吾荣小屋';
 
       document.getElementById('loading').classList.add('hidden');
       document.getElementById('article').classList.remove('hidden');
@@ -166,5 +170,11 @@ import Container from "@/components/container.astro";
     // 只在有英文版时才切换
     const enEl = document.querySelector('[data-lang="en"]');
     if (enEl && enEl.style.display !== 'none') applyLang();
+    // 同步更新页面标题
+    if (loadedPost) {
+      const lang = currentLang();
+      const pageTitle = lang === 'en' ? (loadedPost.titleEn || loadedPost.title) : loadedPost.title;
+      document.title = (pageTitle || '博客文章') + ' | 吾荣小屋';
+    }
   });
 </script>
