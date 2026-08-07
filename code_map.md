@@ -16,15 +16,18 @@
 
 ## 后台管理（public/）
 
-| 文件 | 作用 | 鉴权方式 |
-|------|------|----------|
-| `manage/index.html` | 管理面板入口（iframe 容器） | 无（内嵌各子页面） |
-| `nav-admin/index.html` | 导航管理 | `nav_pwd` (sessionStorage) |
-| `github-admin/index.html` | GitHub 专区管理 | `nav_pwd` |
-| `relay-admin/index.html` | Token 中转管理 | `nav_pwd` |
-| `stats-admin/index.html` | 访问统计看板 | `nav_pwd` |
-| `blog-editor/index.html` | 博客编辑器 | `nav_pwd`，通过 `/api/verify` 校验 |
-| `migrate-blog.html` | 博客迁移工具（一次性） | `nav_pwd`，迁移后删除 |
+统一入口架构：`/admin/`（登录）→ `/manage/`（统一面板，iframe 内嵌各子页面）
+
+| 文件 | 作用 | 鉴权方式 | 直接访问行为 |
+|------|------|----------|-------------|
+| `admin/index.html` | 登录页（唯一登录入口） | `/api/verify` 校验密码 | 登录后跳转 `/manage/` |
+| `manage/index.html` | 统一管理面板（iframe 容器，5 个页签） | `nav_pwd` + `admin_logged_in`，未登录跳 `/admin/` | 需登录才能访问 |
+| `nav-admin/index.html` | 导航管理（🧭 导航页签） | `nav_pwd` (sessionStorage) | iframe 检测，重定向到 `/manage/#nav` |
+| `github-admin/index.html` | GitHub 专区管理（🐙 GitHub 页签） | `nav_pwd` | iframe 检测，重定向到 `/manage/#github` |
+| `relay-admin/index.html` | Token 中转管理（🔑 Token 中转页签） | `nav_pwd` | iframe 检测，重定向到 `/manage/#relay` |
+| `stats-admin/index.html` | 访问统计看板（📊 看板页签） | `nav_pwd` | iframe 检测，重定向到 `/manage/#stats` |
+| `blog-editor/index.html` | 博客编辑器（✍️ 博客页签） | `nav_pwd`，通过 `/api/verify` 校验 | iframe 检测，重定向到 `/manage/#blog` |
+| `admin/cms/index.html` | 已废弃（原 Decap CMS） | 无 | 重定向到 `/manage/` |
 
 ## API Functions（functions/api/）
 
@@ -40,7 +43,6 @@
 | `verify.js` | `/api/verify` | POST | 密码校验（登录用） |
 | `track.js` | `/api/track` | POST | 访问统计埋点 |
 | `go.js` | `/api/go` | GET | 链接跳转（统计点击） |
-| `auth.js` | `/api/auth` | GET | GitHub OAuth 回调（旧博客编辑器用，已弃用） |
 
 ## KV 数据结构
 

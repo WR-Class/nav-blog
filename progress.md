@@ -110,6 +110,54 @@
 ### 用户需要操作
 
 1. 等待 Cloudflare Pages 自动部署（推送后 1-2 分钟）
-2. 打开博客编辑器（`/blog-editor/`），登录后点击「🌐 重新翻译」对现有博文重新翻译
+2. 从 `wurong.cc.cd` 首页进入后台（`/admin/` 登录 → `/manage/` 统一面板），点击「✍️ 博客」页签，点击「🌐 重新翻译」对现有博文重新翻译
 3. 从 `wurong.cc.cd` 访问博客，测试中英文切换效果
 4. 以后写新博文保存时将自动翻译，无需 AI 介入
+
+## 2026-08-08 统一后台入口 — 消除多个独立后台页面
+
+### 背景
+
+用户发现后台入口不统一：`/manage/` 和 `/blog-editor/` 都能直接访问，且 `/blog-editor/` 只显示博客编辑器。用户要求所有后台功能（看板、导航、GitHub、Token 中转、博客）统一在 `/manage/` 下，不允许单独入口。
+
+### 问题根因
+
+1. `/manage/index.html` 本身**没有登录保护**，任何人都能直接访问统一面板
+2. `/admin/cms/index.html`（废弃的 Decap CMS）**没有 iframe 检测**，是一个独立的后台入口，且有直接链接指向 `/manage/`
+3. 登录体验碎片化：用户直接访问 `/manage/` 看到空面板，点页签后子页面各自弹出登录框
+
+### 修复内容
+
+1. **`/manage/index.html` 添加登录保护**
+   - 在 `<head>` 最前面加入登录检查脚本
+   - 检查 `sessionStorage.nav_pwd` 和 `localStorage.admin_logged_in`
+   - 未登录则 `location.replace('/admin/')` 跳转登录页
+   - `admin_logged_in` 为 true 但 `nav_pwd` 丢失（新标签页场景）也要求重新登录
+
+2. **`/admin/cms/index.html` 替换为重定向**
+   - 移除废弃的 Decap CMS（博客管理已迁移至 KV + 自定义编辑器）
+   - 整个文件替换为 `location.replace('/manage/')` 重定向
+   - 消除了独立的后台入口和直接链接
+
+3. **子页面 iframe 检测确认正常**
+   - 5 个子页面（blog-editor / stats-admin / nav-admin / github-admin / relay-admin）均已有 `window.top===window.self` 检测
+   - 直接访问子页面 URL 会自动重定向到 `/manage/#对应页签`
+
+### 修复后的后台入口架构
+
+```
+/admin/          → 登录页（唯一登录入口）
+/manage/         → 统一管理面板（需登录，否则跳 /admin/）
+  ├─ 📊 看板     → iframe 加载 /stats-admin/（直接访问重定向到 /manage/#stats）
+  ├─ 🧭 导航     → iframe 加载 /nav-admin/（直接访问重定向到 /manage/#nav）
+  ├─ 🐙 GitHub   → iframe 加载 /github-admin/（直接访问重定向到 /manage/#github）
+  ├─ 🔑 Token    → iframe 加载 /relay-admin/（直接访问重定向到 /manage/#relay）
+  └─ ✍️ 博客     → iframe 加载 /blog-editor/（直接访问重定向到 /manage/#blog）
+/admin/cms/      → 重定向到 /manage/（废弃的 Decap CMS 已移除）
+```
+
+### 用户需要操作
+
+1. 推送代码到 GitHub → Cloudflare Pages 自动部署
+2. 从 `wurong.cc.cd` 首页导航进入后台，测试统一入口是否正常
+3. 确认直接访问 `/blog-editor/` 等子页面会自动跳转到 `/manage/`

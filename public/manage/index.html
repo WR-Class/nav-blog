@@ -4,6 +4,26 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>管理面板 | 吾荣小屋</title>
+  <!-- 登录保护：未登录则跳转到 /admin/ 登录页 -->
+  <script>
+    (function () {
+      var pwd = '';
+      try { pwd = sessionStorage.getItem('nav_pwd') || ''; } catch (e) {}
+      var loggedIn = false;
+      try { loggedIn = localStorage.getItem('admin_logged_in') === 'true'; } catch (e) {}
+      if (!pwd && !loggedIn) {
+        window.location.replace('/admin/');
+        return;
+      }
+      // 确保 sessionStorage 里有 nav_pwd，供 iframe 内子页面共享登录态
+      if (loggedIn && !pwd) {
+        // admin_logged_in 为 true 但 nav_pwd 丢失（例如新标签页），需要重新登录
+        localStorage.removeItem('admin_logged_in');
+        window.location.replace('/admin/');
+        return;
+      }
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body { height: 100%; margin: 0; }

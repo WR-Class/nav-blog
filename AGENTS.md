@@ -21,7 +21,6 @@
 - 前端页面：`src/pages/`（Astro 静态页面）
 - 后台管理：`public/*-admin/`、`public/blog-editor/`、`public/manage/`（纯 HTML）
 - API Functions：`functions/api/`（Cloudflare Pages Functions）
-- 内容集合：`src/content/`（已弃用，博客内容迁移到 KV）
 
 ## 环境变量（Cloudflare Pages）
 
@@ -42,6 +41,6 @@
 
 1. 博客内容已从 GitHub 仓库迁移到 KV 数据库，仓库中不再存储博客正文
 2. 博客详情页 `/blog/:slug` 通过 `_redirects` 重写到 `/blog/post`，客户端 JS 读取 slug
-3. 所有后台统一使用 `nav_pwd`（sessionStorage）进行密码鉴权
+3. 所有后台统一使用 `nav_pwd`（sessionStorage）进行密码鉴权，统一入口 `/admin/` → `/manage/`
 4. 博客翻译支持 DeepL（优先）和谷歌翻译（回退），含术语表和分块并行翻译
-5. 迁移完成后需删除 `public/migrate-blog.html` 和 `src/content/` 下的 md 文件
+5. 已删除废弃文件：Decap CMS（`admin/config.yml`）、OAuth 回调（`auth.js`/`callback.js`）、迁移工具（`migrate-blog.html`）、旧博客 md 文件（`src/content/`）
