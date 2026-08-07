@@ -161,3 +161,37 @@
 1. 推送代码到 GitHub → Cloudflare Pages 自动部署
 2. 从 `wurong.cc.cd` 首页导航进入后台，测试统一入口是否正常
 3. 确认直接访问 `/blog-editor/` 等子页面会自动跳转到 `/manage/`
+
+## 2026-08-08 多 DeepL Key 轮换 + 前端驱动翻译
+
+### 背景
+
+用户反馈翻译超时（Cloudflare 30s 限制），并要求支持配置多个 DeepL Key（一个 free 用完了用另一个）。
+
+### 已完成的工作
+
+1. **多 DeepL Key 轮换（`functions/api/translate.js` + `functions/api/blog.js`）**
+   - 新增环境变量 `DEEPL_API_KEYS`（逗号分隔多个 Key）
+   - 向后兼容：有 `DEEPL_API_KEYS` 用它，否则回退 `DEEPL_API_KEY`（单个）
+   - `deeplTranslate` 函数逐个 Key 尝试，403/429（额度用完/限流）自动切下一个
+   - Free Key（以 `:fx` 结尾）自动使用 `api-free.deepl.com`，Pro Key 使用 `api-pro.deepl.com`
+   - 全部 Key 失败后回退 Google Translate
+
+2. **前端驱动翻译避免超时（`public/blog-editor/index.html`）**
+   - 「重新翻译」改为前端逐行分批翻译（每批 6 行），调用 `/api/translate` 短请求
+   - 翻译进度实时显示（已翻译 X / Y 行）
+   - 翻译完成后调用 `save-translation` 接口保存结果到 KV
+   - 新增 `save-translation` action 在 `blog.js` 中，仅保存翻译结果不触发后端翻译
+
+### 环境变量配置说明
+
+| 变量名 | 类型 | 说明 |
+|--------|------|------|
+| `DEEPL_API_KEY` | 密钥 | 单个 DeepL Key（向后兼容） |
+| `DEEPL_API_KEYS` | 明文 | 多个 DeepL Key，逗号分隔（推荐），Free Key 以 `:fx` 结尾 |
+
+### 用户需要操作
+
+1. 等 Cloudflare Pages 自动部署（推送后 1-2 分钟）
+2. 如需多 Key：在 Cloudflare Pages 环境变量中添加 `DEEPL_API_KEYS`，值如 `key1:fx,key2:fx,key3`
+3. 从 `wurong.cc.cd` 后台进入博客编辑器，点击「重新翻译」测试

@@ -17,7 +17,25 @@
 - **下次避免**：Cloudflare Pages 静态页面链接一律加尾部斜杠
 - **修复时间**：2026-08-08
 
-## 3. GitHub API 403 限流
+## 3. 翻译超时（Cloudflare 30s 函数限制）
+
+- **现象**：博客文章保存或重新翻译时，后端翻译整篇文章超过 Cloudflare Pages Function 30 秒限制，请求超时
+- **根因**：后端一次性翻译整篇 Markdown 正文（分块+并行+清理扫描），文章较长时总耗时超过 30 秒
+- **解法**：改为前端驱动翻译——前端按行分批（每批 6 行）调用 `/api/translate` 短请求，翻译完成后通过 `save-translation` 接口保存结果到 KV
+- **下次避免**：Cloudflare Pages Function 有 30 秒硬限制，长耗时任务必须拆分为前端驱动的多次短请求
+- **适用范围**：所有涉及长文本翻译或批量操作的后台功能
+- **修复时间**：2026-08-08
+
+## 4. 单个 DeepL Key 额度用完导致翻译全部失败
+
+- **现象**：DeepL Free Key 每月 50 万字符额度用完后，翻译请求返回 403/429，导致所有翻译失败
+- **根因**：只配置了单个 DeepL Key，没有轮换机制
+- **解法**：新增 `DEEPL_API_KEYS` 环境变量（逗号分隔多个 Key），`deeplTranslate` 函数逐个 Key 尝试，403/429 自动切下一个；全部失败回退 Google Translate
+- **下次避免**：依赖第三方 API 配额的功能必须支持多 Key 轮换 + 备用引擎回退
+- **适用范围**：`functions/api/translate.js`、`functions/api/blog.js` 中的所有翻译函数
+- **修复时间**：2026-08-08
+
+## 5. GitHub API 403 限流
 
 - **现象**：迁移工具调用 GitHub API 获取文件列表时返回 403
 - **根因**：未认证的 GitHub API 请求有严格速率限制（每小时 60 次）
