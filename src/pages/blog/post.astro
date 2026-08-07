@@ -1,0 +1,157 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+---
+
+<Layout title="博客文章">
+  <Container>
+    <div id="loading" class="text-center text-slate-400 py-20">正在加载…</div>
+    <div id="errorBox" class="hidden text-center py-20">
+      <p class="text-slate-500 text-lg mb-4">文章加载失败或不存在</p>
+      <a href="/blog" class="text-blue-500 hover:underline">← 返回博客列表</a>
+    </div>
+    <article id="article" class="hidden mx-auto max-w-3xl mt-14">
+      <!-- 中文版 -->
+      <div data-lang="zh">
+        <span id="category-zh" class="text-blue-400 uppercase tracking-wider text-sm font-medium"></span>
+        <h1 id="title-zh" class="text-4xl lg:text-5xl font-bold lg:tracking-tight mt-1 lg:leading-tight"></h1>
+        <div class="flex gap-2 mt-3 items-center flex-wrap md:flex-nowrap">
+          <span id="author-zh" class="text-gray-400"></span>
+          <span class="text-gray-400">•</span>
+          <time id="date-zh" class="text-gray-400"></time>
+          <span class="text-gray-400 hidden md:block">•</span>
+          <div id="tags-zh" class="w-full md:w-auto flex flex-wrap gap-3"></div>
+        </div>
+        <div id="body-zh" class="mx-auto prose prose-lg mt-6 max-w-3xl"></div>
+      </div>
+      <!-- 英文版 -->
+      <div data-lang="en" style="display:none">
+        <span id="category-en" class="text-blue-400 uppercase tracking-wider text-sm font-medium"></span>
+        <h1 id="title-en" class="text-4xl lg:text-5xl font-bold lg:tracking-tight mt-1 lg:leading-tight"></h1>
+        <div class="flex gap-2 mt-3 items-center flex-wrap md:flex-nowrap">
+          <span id="author-en" class="text-gray-400"></span>
+          <span class="text-gray-400">•</span>
+          <time id="date-en" class="text-gray-400"></time>
+          <span class="text-gray-400 hidden md:block">•</span>
+          <div id="tags-en" class="w-full md:w-auto flex flex-wrap gap-3"></div>
+        </div>
+        <div id="body-en" class="mx-auto prose prose-lg mt-6 max-w-3xl"></div>
+      </div>
+      <div class="text-center mt-8">
+        <a href="/blog" class="bg-gray-100 px-5 py-3 rounded-md hover:bg-gray-200 transition">← 返回博客列表</a>
+      </div>
+    </article>
+  </Container>
+</Layout>
+
+<script>
+  // 从 URL 路径提取 slug：/blog/hello-world → hello-world
+  function getSlug() {
+    const parts = window.location.pathname.replace(/\/+$/, '').split('/');
+    const idx = parts.indexOf('blog');
+    if (idx >= 0 && parts[idx + 1] && parts[idx + 1] !== 'post') return decodeURIComponent(parts[idx + 1]);
+    // fallback: query param
+    return new URLSearchParams(window.location.search).get('slug') || '';
+  }
+
+  function detectLang() {
+    const langs = navigator.languages?.length ? navigator.languages : [navigator.language || ''];
+    for (const l of langs) { if (/^zh\b/i.test(l)) return 'zh'; }
+    return 'en';
+  }
+  function currentLang() {
+    const saved = localStorage.getItem('site_lang');
+    return saved === 'zh' || saved === 'en' ? saved : detectLang();
+  }
+
+  function applyLang() {
+    const lang = currentLang();
+    document.querySelectorAll('[data-lang]').forEach(el => {
+      el.style.display = el.dataset.lang === lang ? '' : 'none';
+    });
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function formatDate(dateStr, lang) {
+    if (!dateStr) return '';
+    try {
+      return new Date(dateStr + 'T00:00:00').toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-CN', { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch { return dateStr; }
+  }
+
+  async function loadPost() {
+    const slug = getSlug();
+    if (!slug) { showError(); return; }
+
+    try {
+      const res = await fetch('/api/blog?slug=' + encodeURIComponent(slug));
+      if (!res.ok) { showError(); return; }
+      const data = await res.json();
+      const post = data.post;
+      if (!post) { showError(); return; }
+
+      // 中文内容
+      document.getElementById('category-zh').textContent = post.category || '';
+      document.getElementById('title-zh').textContent = post.title || '';
+      document.getElementById('author-zh').textContent = post.author || '';
+      document.getElementById('date-zh').textContent = formatDate(post.publishDate, 'zh');
+      document.getElementById('tags-zh').innerHTML = (post.tags || []).map(t => '<span class="text-sm text-gray-500">#' + esc(t) + '</span>').join('');
+      document.getElementById('body-zh').innerHTML = window.marked ? window.marked.parse(post.body || '') : '<pre>' + esc(post.body || '') + '</pre>';
+
+      // 英文内容
+      const hasEn = post.bodyEn && post.bodyEn.trim();
+      document.getElementById('category-en').textContent = post.category || '';
+      document.getElementById('title-en').textContent = post.titleEn || post.title || '';
+      document.getElementById('author-en').textContent = post.author || '';
+      document.getElementById('date-en').textContent = formatDate(post.publishDate, 'en');
+      document.getElementById('tags-en').innerHTML = (post.tags || []).map(t => '<span class="text-sm text-gray-500">#' + esc(t) + '</span>').join('');
+      document.getElementById('body-en').innerHTML = hasEn
+        ? (window.marked ? window.marked.parse(post.bodyEn) : '<pre>' + esc(post.bodyEn) + '</pre>')
+        : '<p class="text-slate-400">English translation not available yet.</p>';
+
+      // 如果没有英文版，隐藏语言切换（只显示中文）
+      if (!hasEn) {
+        document.querySelector('[data-lang="en"]').style.display = 'none';
+        document.querySelector('[data-lang="zh"]').style.display = '';
+      } else {
+        applyLang();
+      }
+
+      // 更新页面标题
+      document.title = (post.title || '博客文章') + ' | 吾荣小屋';
+
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('article').classList.remove('hidden');
+    } catch (e) {
+      showError();
+    }
+  }
+
+  function showError() {
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('errorBox').classList.remove('hidden');
+  }
+
+  // 加载 marked.js 后渲染
+  function init() {
+    if (window.marked) {
+      loadPost();
+    } else {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/marked@12/marked.min.js';
+      s.onload = loadPost;
+      s.onerror = loadPost; // 即使加载失败也尝试渲染（fallback 到 pre 标签）
+      document.head.appendChild(s);
+    }
+  }
+
+  init();
+  window.addEventListener('langchange', () => {
+    // 只在有英文版时才切换
+    const enEl = document.querySelector('[data-lang="en"]');
+    if (enEl && enEl.style.display !== 'none') applyLang();
+  });
+</script>

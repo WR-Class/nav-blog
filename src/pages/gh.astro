@@ -1,0 +1,94 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+---
+
+<Layout title="GitHub 项目">
+  <Container>
+    <div class="mx-auto max-w-3xl mt-14">
+      <a href="/github" class="text-indigo-600 dark:text-indigo-400 hover:underline text-sm" data-i18n="← 返回 GitHub 专区|← Back to GitHub Zone">← 返回 GitHub 专区</a>
+
+      <div id="loading" class="text-center text-slate-400 py-20">正在加载项目信息…</div>
+
+      <article id="project" class="hidden mt-4">
+        <div class="flex items-center gap-4">
+          <img id="p-avatar" class="w-14 h-14 rounded-lg" src="" alt="" onerror="this.style.visibility='hidden'" />
+          <div>
+            <h1 id="p-name" class="text-3xl lg:text-4xl font-bold text-slate-800 dark:text-slate-100"></h1>
+            <p id="p-full" class="text-sm text-slate-400"></p>
+          </div>
+        </div>
+
+        <p id="p-desc" class="text-lg leading-relaxed text-slate-600 dark:text-slate-300 mt-6"></p>
+
+        <div class="flex flex-wrap gap-3 mt-4 text-sm text-slate-500">
+          <span id="p-stars"></span>
+          <span id="p-lang"></span>
+          <span id="p-forks"></span>
+        </div>
+
+        <div id="p-topics" class="flex flex-wrap gap-2 mt-4"></div>
+
+        <div class="mt-8">
+          <a id="p-link" href="#" target="_blank" rel="noopener noreferrer"
+            class="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-lg font-semibold transition">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.26.82-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.09-.745.083-.73.083-.73 1.205.085 1.84 1.237 1.84 1.237 1.07 1.834 2.807 1.304 3.492.997.108-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.93 0-1.31.468-2.38 1.236-3.22-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.3 1.23a11.5 11.5 0 013.003-.404c1.02.005 2.047.138 3.006.404 2.29-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.91 1.235 3.22 0 4.61-2.807 5.625-5.48 5.92.43.372.823 1.102.823 2.222v3.293c0 .32.216.694.825.576C20.565 21.796 24 17.297 24 12c0-6.63-5.37-12-12-12z"></path></svg>
+            <span data-i18n="在 GitHub 上查看|View on GitHub">在 GitHub 上查看</span>
+          </a>
+        </div>
+
+        <div id="p-readme" class="prose prose-lg dark:prose-invert mt-10 max-w-none border-t pt-8"></div>
+      </article>
+
+      <div id="notfound" class="hidden text-center text-slate-400 py-20">
+        <span data-i18n="没有找到这个项目|Project not found">没有找到这个项目</span>
+      </div>
+    </div>
+  </Container>
+
+  <!-- markdown 渲染库 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script is:inline>
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const id = params.get('id');
+      const $ = (s) => document.querySelector(s);
+
+      fetch('/api/github')
+        .then((r) => r.json())
+        .then((d) => {
+          const p = (d.projects || []).find((x) => x.id === id);
+          $('#loading').classList.add('hidden');
+          if (!p) { $('#notfound').classList.remove('hidden'); return; }
+
+          document.title = p.name + ' | 吾荣小屋';
+          $('#project').classList.remove('hidden');
+          $('#p-avatar').src = p.avatar || '';
+          $('#p-name').textContent = p.name || '';
+          $('#p-full').textContent = p.fullName || '';
+          $('#p-desc').textContent = p.description || '';
+          $('#p-stars').textContent = '⭐ ' + (p.stars || 0);
+          $('#p-lang').textContent = p.language ? '🔤 ' + p.language : '';
+          $('#p-forks').textContent = p.forks ? '🍴 ' + p.forks : '';
+          $('#p-link').href = p.url || '#';
+
+          const topics = $('#p-topics');
+          (p.topics || []).forEach((t) => {
+            const s = document.createElement('span');
+            s.className = 'text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-1 rounded';
+            s.textContent = '#' + t;
+            topics.appendChild(s);
+          });
+
+          if (p.readme && window.marked) {
+            $('#p-readme').innerHTML = DOMPurify.sanitize(marked.parse(p.readme));
+          }
+        })
+        .catch(() => {
+          $('#loading').classList.add('hidden');
+          $('#notfound').classList.remove('hidden');
+        });
+    })();
+  </script>
+</Layout>

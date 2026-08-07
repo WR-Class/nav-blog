@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理面板 | 吾荣小屋</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    .tab-active { background:#f59e0b !important; color:#fff !important; box-shadow: inset 0 -3px 0 #b45309; }
+    .tab-btn { transition: background .15s, color .15s; }
+    .tab-btn:hover { background:#fef3c7 !important; color:#92400e !important; }
+    iframe { width:100%; height:100%; border:0; display:block; }
+  </style>
+</head>
+<body class="bg-slate-100 flex flex-col h-screen">
+  <!-- 顶部标题 + 页签 -->
+  <header class="bg-white border-b border-slate-200 shadow-sm flex-shrink-0">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="flex items-center justify-between h-14">
+        <div class="flex items-center gap-2 font-bold text-slate-800">
+          <span>⚙️ 吾荣小屋 · 管理面板</span>
+        </div>
+        <a href="/" class="text-sm text-indigo-600 hover:underline">← 返回首页</a>
+      </div>
+      <nav class="flex gap-1 -mb-px overflow-x-auto">
+        <button data-tab="stats"  class="tab-btn px-4 py-2.5 text-sm font-medium rounded-t-lg whitespace-nowrap text-slate-600 hover:bg-slate-100">📊 看板</button>
+        <button data-tab="nav"    class="tab-btn px-4 py-2.5 text-sm font-medium rounded-t-lg whitespace-nowrap text-slate-600 hover:bg-slate-100">🧭 导航</button>
+        <button data-tab="github" class="tab-btn px-4 py-2.5 text-sm font-medium rounded-t-lg whitespace-nowrap text-slate-600 hover:bg-slate-100">🐙 GitHub 专区</button>
+        <button data-tab="relay"  class="tab-btn px-4 py-2.5 text-sm font-medium rounded-t-lg whitespace-nowrap text-slate-600 hover:bg-slate-100">🔑 Token 中转</button>
+        <button data-tab="blog"   class="tab-btn px-4 py-2.5 text-sm font-medium rounded-t-lg whitespace-nowrap text-slate-600 hover:bg-slate-100">✍️ 博客</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- 内容区：各后台以 iframe 内嵌，按需加载 -->
+  <main class="flex-1 min-h-0 relative bg-slate-100">
+    <div id="frame-stats"  class="tab-panel absolute inset-0 hidden"></div>
+    <div id="frame-nav"    class="tab-panel absolute inset-0 hidden"></div>
+    <div id="frame-github" class="tab-panel absolute inset-0 hidden"></div>
+    <div id="frame-relay"  class="tab-panel absolute inset-0 hidden"></div>
+    <div id="frame-blog"   class="tab-panel absolute inset-0 hidden"></div>
+  </main>
+
+  <script>
+    const SRC = {
+      stats:  '/stats-admin/',
+      nav:    '/nav-admin/',
+      github: '/github-admin/',
+      relay:  '/relay-admin/',
+      blog:   '/blog-editor/',
+    };
+    const loaded = {};
+    const btns = document.querySelectorAll('.tab-btn');
+
+    function show(tab) {
+      // 页签高亮
+      btns.forEach(b => {
+        b.classList.toggle('tab-active', b.dataset.tab === tab);
+      });
+      // 面板显隐
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+      const panel = document.getElementById('frame-' + tab);
+      panel.classList.remove('hidden');
+      // 懒加载 iframe（首次点击才加载，之后共享同源 sessionStorage 里的登录态）
+      // 所有后台统一使用 nav_pwd；已在任一后台验证成功后，其他页签直接复用。
+      if (!loaded[tab]) {
+        const f = document.createElement('iframe');
+        f.src = SRC[tab];
+        panel.appendChild(f);
+        loaded[tab] = true;
+      }
+      // 记住上次所在页签
+      try { localStorage.setItem('manage_tab', tab); } catch (e) {}
+    }
+
+    btns.forEach(b => b.addEventListener('click', () => show(b.dataset.tab)));
+
+    // 初始页签：URL hash > 上次记忆 > 默认导航
+    const hash = (location.hash || '').replace('#', '');
+    const remembered = (function(){ try { return localStorage.getItem('manage_tab'); } catch(e){ return null; } })();
+    const initial = SRC[hash] ? hash : (SRC[remembered] ? remembered : 'stats');
+    show(initial);
+  </script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+---
+
+<Layout title="Token 中转">
+  <Container>
+    <div class="mt-14 mb-8 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 class="text-4xl lg:text-5xl font-bold text-slate-800 dark:text-slate-100 mb-3" data-i18n="Token 中转|Token Relay">Token 中转</h1>
+        <p class="text-lg text-slate-500 dark:text-slate-400" data-i18n="分享可白嫖的 AI API 中转站，注册即送额度|Curated AI API relay sites with free sign-up credits">分享可白嫖的 AI API 中转站，注册即送额度</p>
+      </div>
+      <a href="/relay-probe" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 whitespace-nowrap" data-i18n="🔍 倍率/价格探测工具|🔍 Ratio/Price Probe">🔍 倍率/价格探测工具</a>
+    </div>
+
+    <div id="loading" class="text-center text-slate-400 py-20" data-i18n="正在加载…|Loading…">正在加载…</div>
+
+    <div id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-16"></div>
+
+    <p id="empty" class="text-center text-slate-400 py-20 hidden" data-i18n="还没有分享的中转站|No relay sites shared yet">还没有分享的中转站</p>
+  </Container>
+
+  <script is:inline>
+    (function () {
+      const $ = (s) => document.querySelector(s);
+      function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+      function detectLang(){const l=(navigator.languages&&navigator.languages.length)?navigator.languages:[navigator.language||''];for(let i=0;i<l.length;i++){if(/^zh\b/i.test(l[i]))return 'zh';}return 'en';}
+      function lang(){const s=localStorage.getItem('site_lang');return (s==='zh'||s==='en')?s:detectLang();}
+
+      async function translateSites(sites) {
+        if (lang() !== 'en') return sites;
+        const fields = [];
+        sites.forEach(s => ['name','registerMethod','strategy','intro'].forEach(field => {
+          const value = s[field];
+          if (value && /[\u4e00-\u9fff]/.test(value)) fields.push({site:s, field, value});
+        }));
+        if (!fields.length) return sites;
+        try {
+          const r = await fetch('/api/translate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({texts:fields.map(x=>x.value), to:'en'})});
+          if (!r.ok) throw Error('translate ' + r.status);
+          const d = await r.json();
+          fields.forEach((x, i) => { x.site[x.field] = d.translations?.[i] || x.value; });
+        } catch {}
+        return sites;
+      }
+
+      async function render(sites) {
+        sites = await translateSites(sites);
+        $('#loading').classList.add('hidden');
+        const grid = $('#grid'); const empty = $('#empty');
+        if (!sites || !sites.length) { empty.classList.remove('hidden'); grid.innerHTML=''; return; }
+        empty.classList.add('hidden');
+        const en = lang()==='en';
+        grid.innerHTML = sites.map((s) => {
+          const method = s.registerMethod ? `
+            <div class="mb-2">
+              <div class="text-xs font-semibold text-slate-400 dark:text-slate-500 mb-0.5">${en?'Sign-up':'注册方式'}</div>
+              <div class="text-sm text-slate-600 dark:text-slate-300">${esc(s.registerMethod)}</div>
+            </div>` : '';
+          const strategy = s.strategy ? `
+            <div class="mb-2">
+              <div class="text-xs font-semibold text-amber-500 mb-0.5">${en?'Free credits':'白嫖策略'}</div>
+              <div class="text-sm text-amber-700 dark:text-amber-300 font-medium">${esc(s.strategy)}</div>
+            </div>` : '';
+          const intro = s.intro ? `
+            <div class="mb-2">
+              <div class="text-xs font-semibold text-slate-400 dark:text-slate-500 mb-0.5">${en?'Notes':'须知'}</div>
+              <div class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-line">${esc(s.intro)}</div>
+            </div>` : '';
+          return `
+          <div class="site-card bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow flex flex-col">
+            <div class="flex items-center gap-3 mb-4">
+              ${s.logo?`<img src="${esc(s.logo)}" class="w-10 h-10 rounded-lg object-contain" onerror="this.style.display='none'"/>`:''}
+              <h3 class="text-lg font-bold text-slate-800 dark:text-slate-100 truncate">${esc(s.name||s.url)}</h3>
+            </div>
+            ${method}
+            ${strategy}
+            ${intro}
+            <div class="mt-auto pt-4 flex gap-2">
+              <a href="/api/go?id=${encodeURIComponent(s.id || '')}" target="_blank" rel="noopener noreferrer"
+                 class="flex-1 text-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">${en?'Sign up':'去注册白嫖'}</a>
+              ${s.url?`<a href="/relay-probe?url=${encodeURIComponent(s.url)}"
+                 class="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg text-sm hover:bg-slate-50 dark:hover:bg-slate-600" title="${en?'View prices':'查看价格'}">💰</a>`:''}
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      fetch('/api/relay').then(r=>r.json()).then(d=>render(d.sites||[])).catch(()=>{ $('#loading').classList.add('hidden'); $('#empty').classList.remove('hidden'); });
+      window.addEventListener('langchange', () => { fetch('/api/relay').then(r=>r.json()).then(d=>render(d.sites||[])); });
+    })();
+  </script>
+</Layout>

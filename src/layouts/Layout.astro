@@ -1,0 +1,360 @@
+---
+import { SEO } from "astro-seo";
+import Footer from "@/components/footer.astro";
+import Navbar from "@/components/navbar/navbar.astro";
+import "@fontsource-variable/inter/index.css";
+import "@fontsource-variable/bricolage-grotesque";
+import "../styles/global.css";
+
+export interface Props {
+  title: string;
+}
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site).toString();
+
+const resolvedImageWithDomain = new URL(
+  "/opengraph.jpg",
+  Astro.site
+).toString();
+
+const { title } = Astro.props;
+
+const makeTitle = title
+  ? title + " | 吾荣小屋"
+  : "吾荣小屋 - 常用网站导航和技术博客";
+
+const seoDescription = "吾荣小屋 —— 结合常用网站导航与技术博客的个人网站 / Wurong's Nook — a personal site combining a curated web directory and a tech blog.";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+
+    <!-- <link rel="preload" as="image" href={src} alt="Hero" /> -->
+    <SEO
+      title={makeTitle}
+      description={seoDescription}
+      canonical={canonicalURL}
+      twitter={{
+        creator: "@wrclass",
+        site: "@wrclass",
+        card: "summary_large_image",
+      }}
+      openGraph={{
+        basic: {
+          url: canonicalURL,
+          type: "website",
+          title: "吾荣小屋 Wurong's Nook",
+          image: resolvedImageWithDomain,
+        },
+        image: {
+          alt: "吾荣小屋 Wurong's Nook",
+        },
+      }}
+    />
+  </head>
+  <body>
+    <!-- 字体与页面语言由 Navbar 的 data-lang 同步；中文 MiSans，英文标题 Blenda Script 回退字体 -->
+    <!-- 站点背景层（从 /api/settings 动态读取背景图 URL；未设置则透明） -->
+    <!-- siteBgBlur：模糊填充模式下的底层（放大模糊的同图铺满，填补留白） -->
+    <div id="siteBgBlur" aria-hidden="true"
+      style="position:fixed;inset:0;z-index:-3;background-size:cover;background-position:center;filter:blur(24px);transform:scale(1.1);display:none;"></div>
+    <div id="siteBg" aria-hidden="true"
+      style="position:fixed;inset:0;z-index:-2;background-size:cover;background-repeat:no-repeat;background-position:center;background-attachment:fixed;transition:opacity .4s;"></div>
+    <div id="siteBgDim" aria-hidden="true"
+      style="position:fixed;inset:0;z-index:-1;background:#000;opacity:0;transition:opacity .4s;"></div>
+
+    <Navbar />
+    <slot />
+    <Footer />
+
+    <!-- 店铺浮标：右下角小图标（在个人背景按钮左侧），点击展开小卡片 -->
+    <div id="shopWrap" style="position:fixed;right:16px;bottom:70px;z-index:59;">
+      <div id="shopCard" style="display:none;position:absolute;right:0;bottom:54px;width:230px;background:#fff;color:#1e293b;border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,0.22);padding:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <strong style="font-size:14px;" data-i18n="🛍️ 吾荣小店|🛍️ Wurong's Shop">🛍️ 吾荣小店</strong>
+          <button id="shopClose" type="button" aria-label="关闭" style="border:none;background:none;font-size:15px;cursor:pointer;color:#94a3b8;line-height:1;">✕</button>
+        </div>
+        <p style="font-size:12px;color:#64748b;margin:6px 0 10px;line-height:1.5;" data-i18n="GPT / Claude Code 成品账号，QQ会员·绿钻·夸克网盘等会员代充值，省心到手～|Ready-made GPT / Claude Code accounts, QQ memberships, Green Diamond, Quark Drive top-ups and more.">GPT / Claude Code 成品账号，QQ会员·绿钻·夸克网盘等会员代充值，省心到手～</p>
+        <a href="/api/go?id=shop" target="_blank" rel="noopener noreferrer"
+          style="display:block;text-align:center;padding:8px;background:#4f46e5;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;" data-i18n="进店看看 →|Visit shop →">进店看看 →</a>
+      </div>
+      <button id="shopBtn" type="button" aria-label="吾荣小店" title="吾荣小店"
+        style="width:44px;height:44px;border:none;border-radius:9999px;background:rgba(79,70,229,0.9);color:#fff;font-size:20px;line-height:44px;text-align:center;cursor:pointer;box-shadow:0 4px 14px rgba(79,70,229,0.4);backdrop-filter:blur(4px);transition:transform .15s;">🛍️</button>
+    </div>
+
+    <script is:inline>
+      (function () {
+        var btn = document.getElementById("shopBtn");
+        var card = document.getElementById("shopCard");
+        var close = document.getElementById("shopClose");
+        if (!btn) return;
+        btn.addEventListener("click", function () {
+          card.style.display = card.style.display === "block" ? "none" : "block";
+        });
+        close.addEventListener("click", function () { card.style.display = "none"; });
+        btn.addEventListener("mouseenter", function () { btn.style.transform = "scale(1.08)"; });
+        btn.addEventListener("mouseleave", function () { btn.style.transform = "scale(1)"; });
+      })();
+    </script>
+
+    <!-- 访客个人背景：右下角小图标按钮（仅存本浏览器，不影响网站/其他访客） -->
+    <button id="myBgBtn" type="button" aria-label="换我的背景" title="换我的背景（仅本设备可见）"
+      style="position:fixed;right:16px;bottom:16px;z-index:60;width:44px;height:44px;border:none;border-radius:9999px;background:rgba(30,41,59,0.75);color:#fff;font-size:20px;line-height:44px;text-align:center;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.3);backdrop-filter:blur(4px);transition:transform .15s,background .15s;">🎨</button>
+
+    <!-- 个人背景设置面板 -->
+    <div id="myBgPanel" style="display:none;position:fixed;right:16px;bottom:70px;z-index:61;width:280px;max-width:calc(100vw - 32px);background:#fff;color:#1e293b;border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,0.25);padding:16px;font-size:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <strong style="font-size:15px;" data-i18n="🎨 我的背景|🎨 My background">🎨 我的背景</strong>
+        <button id="myBgClose" type="button" aria-label="关闭" style="border:none;background:none;font-size:18px;cursor:pointer;color:#64748b;">✕</button>
+      </div>
+      <p style="font-size:12px;color:#64748b;margin:0 0 10px;" data-i18n="仅保存在你当前的浏览器，只有你自己看得到，不会改变网站，也不影响其他访客。|Saved only in your current browser. Only you can see it; it does not affect the site or other visitors.">仅保存在你当前的浏览器，只有你自己看得到，不会改变网站，也不影响其他访客。</p>
+      <button id="myBgUpload" type="button" style="width:100%;padding:9px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;">📁 <span data-i18n="📁 上传本地图片|📁 Upload local image">📁 上传本地图片</span></button>
+      <input id="myBgFile" type="file" accept="image/*" style="display:none;" />
+      <div style="margin-top:12px;">
+        <label style="font-size:12px;color:#475569;display:block;margin-bottom:4px;" data-i18n="适应模式|Fit mode">适应模式</label>
+        <select id="myBgFit" style="width:100%;padding:7px;border:2px solid #e2e8f0;border-radius:8px;outline:none;">
+          <option value="cover" data-i18n="铺满（裁掉超出部分）|Cover (crop overflow)">铺满（裁掉超出部分）</option>
+          <option value="blur" data-i18n="完整+模糊填充（竖图推荐）|Full image + blurred fill (recommended for portraits)">完整+模糊填充（竖图推荐）</option>
+          <option value="contain" data-i18n="完整显示（两侧留白）|Contain (leave side space)">完整显示（两侧留白）</option>
+          <option value="stretch" data-i18n="拉伸铺满（可能变形）|Stretch to fill (may distort)">拉伸铺满（可能变形）</option>
+        </select>
+      </div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:8px;">
+        <label style="font-size:12px;color:#475569;white-space:nowrap;" data-i18n="变暗|Dim">变暗</label>
+        <input id="myBgDim" type="range" min="0" max="80" value="40" style="flex:1;" />
+        <span id="myBgDimVal" style="font-size:12px;color:#64748b;width:34px;">40%</span>
+      </div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:8px;">
+        <label style="font-size:12px;color:#475569;white-space:nowrap;" data-i18n="分类透明度|Card opacity">分类透明度</label>
+        <input id="myCardOpacity" type="range" min="0.3" max="1" step="0.05" value="1" style="flex:1;" />
+        <span id="myCardOpacityVal" style="font-size:12px;color:#64748b;width:34px;">100%</span>
+      </div>
+      <button id="myBgReset" type="button" style="width:100%;margin-top:12px;padding:8px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;cursor:pointer;color:#475569;" data-i18n="恢复网站默认背景|Restore site default background">恢复网站默认背景</button>
+    </div>
+
+    <script is:inline>
+      (function () {
+        var MY_KEY = "my_bg_settings"; // 访客个人背景（localStorage，仅本设备）
+        var officialSettings = null;   // 网站官方背景（来自 /api/settings）
+
+        function readMyBg() {
+          try { var v = localStorage.getItem(MY_KEY); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+        }
+
+        function applyCardOpacity(s) {
+          var mine = readMyBg();
+          var opacity = mine && typeof mine.cardBgOpacity === 'number'
+            ? mine.cardBgOpacity
+            : (s && typeof s.cardBgOpacity === 'number' ? s.cardBgOpacity : 1);
+          document.documentElement.style.setProperty('--card-bg-opacity', String(Math.min(1, Math.max(0.3, opacity))));
+        }
+
+        // 全站背景图：根据传入设置渲染背景层
+        function applyBg(s) {
+          var bg = document.getElementById("siteBg");
+          var blur = document.getElementById("siteBgBlur");
+          var dim = document.getElementById("siteBgDim");
+          if (!bg) return;
+          if (s && s.backgroundUrl) {
+            var safeUrl = "url('" + String(s.backgroundUrl).replace(/'/g, "%27") + "')";
+            var fit = s.backgroundFit || "cover";
+            bg.style.backgroundImage = safeUrl;
+            if (fit === "contain") {
+              bg.style.backgroundSize = "contain"; blur.style.display = "none";
+            } else if (fit === "stretch") {
+              bg.style.backgroundSize = "100% 100%"; blur.style.display = "none";
+            } else if (fit === "blur") {
+              bg.style.backgroundSize = "contain";
+              blur.style.backgroundImage = safeUrl; blur.style.display = "block";
+            } else {
+              bg.style.backgroundSize = "cover"; blur.style.display = "none";
+            }
+            var d = (typeof s.backgroundDim === "number" ? s.backgroundDim : 40) / 100;
+            dim.style.opacity = String(d);
+            document.documentElement.classList.add("has-bg");
+          } else {
+            bg.style.backgroundImage = "";
+            blur.style.backgroundImage = ""; blur.style.display = "none";
+            dim.style.opacity = "0";
+            document.documentElement.classList.remove("has-bg");
+          }
+        }
+
+        // 决定当前生效的背景：个人背景优先，否则用官方背景
+        function renderEffective() {
+          var mine = readMyBg();
+          applyBg(mine && mine.backgroundUrl ? mine : officialSettings);
+          applyCardOpacity(officialSettings);
+        }
+
+        // 先用缓存的官方设置立即渲染，避免闪烁；个人背景优先
+        try {
+          var cached = localStorage.getItem("site_settings");
+          if (cached) officialSettings = JSON.parse(cached);
+        } catch (e) {}
+        renderEffective();
+
+        // 拉取最新官方设置
+        fetch("/api/settings")
+          .then(function (r) { return r.json(); })
+          .then(function (s) {
+            officialSettings = s;
+            try { localStorage.setItem("site_settings", JSON.stringify(s)); } catch (e) {}
+            renderEffective();
+          })
+          .catch(function () {});
+
+        // ---------- 个人背景面板交互 ----------
+        var btn = document.getElementById("myBgBtn");
+        var panel = document.getElementById("myBgPanel");
+        var fitSel = document.getElementById("myBgFit");
+        var dimRange = document.getElementById("myBgDim");
+        var dimVal = document.getElementById("myBgDimVal");
+        var cardOpacityRange = document.getElementById("myCardOpacity");
+        var cardOpacityVal = document.getElementById("myCardOpacityVal");
+
+        function loadPanelFromStore() {
+          var m = readMyBg() || {};
+          fitSel.value = ["cover", "contain", "blur", "stretch"].indexOf(m.backgroundFit) >= 0 ? m.backgroundFit : "cover";
+          dimRange.value = (typeof m.backgroundDim === "number" ? m.backgroundDim : 40);
+          dimVal.textContent = dimRange.value + "%";
+          cardOpacityRange.value = (typeof m.cardBgOpacity === "number" ? m.cardBgOpacity : (officialSettings && typeof officialSettings.cardBgOpacity === "number" ? officialSettings.cardBgOpacity : 1));
+          cardOpacityVal.textContent = Math.round(Number(cardOpacityRange.value) * 100) + "%";
+        }
+
+        function saveMyBg(patch) {
+          var m = readMyBg() || {};
+          for (var k in patch) m[k] = patch[k];
+          try { localStorage.setItem(MY_KEY, JSON.stringify(m)); } catch (e) {
+            alert("图片太大，浏览器存不下（个人背景上限约几 MB）。请换一张更小的图片。");
+            return;
+          }
+          renderEffective();
+        }
+
+        btn.addEventListener("click", function () {
+          var showing = panel.style.display === "block";
+          panel.style.display = showing ? "none" : "block";
+          if (!showing) loadPanelFromStore();
+        });
+        document.getElementById("myBgClose").addEventListener("click", function () { panel.style.display = "none"; });
+
+        document.getElementById("myBgUpload").addEventListener("click", function () { document.getElementById("myBgFile").click(); });
+        document.getElementById("myBgFile").addEventListener("change", function (e) {
+          var file = e.target.files && e.target.files[0];
+          if (!file) return;
+          var isGif = /image\/gif/i.test(file.type);
+          if (isGif) {
+            // GIF 保留动画，原样读取（体积大可能存不下，saveMyBg 会提示）
+            var gr = new FileReader();
+            gr.onload = function (ev) { saveMyBg({ backgroundUrl: ev.target.result, backgroundFit: fitSel.value, backgroundDim: Number(dimRange.value) }); };
+            gr.readAsDataURL(file);
+            return;
+          }
+          // 静态图：压缩到宽≤1920，JPEG 降质，控制体积以适应 localStorage
+          var reader = new FileReader();
+          reader.onload = function (ev) {
+            var img = new Image();
+            img.onload = function () {
+              var maxW = 1920;
+              var scale = Math.min(1, maxW / img.width);
+              var w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+              var canvas = document.createElement("canvas");
+              canvas.width = w; canvas.height = h;
+              canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+              var quality = 0.85, dataUri = canvas.toDataURL("image/jpeg", quality);
+              while (dataUri.length > 2200000 && quality > 0.4) { quality -= 0.1; dataUri = canvas.toDataURL("image/jpeg", quality); }
+              saveMyBg({ backgroundUrl: dataUri, backgroundFit: fitSel.value, backgroundDim: Number(dimRange.value) });
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+
+        fitSel.addEventListener("change", function () { saveMyBg({ backgroundFit: fitSel.value }); });
+        dimRange.addEventListener("input", function () { dimVal.textContent = dimRange.value + "%"; });
+        dimRange.addEventListener("change", function () { saveMyBg({ backgroundDim: Number(dimRange.value) }); });
+        cardOpacityRange.addEventListener("input", function () {
+          cardOpacityVal.textContent = Math.round(Number(cardOpacityRange.value) * 100) + "%";
+          saveMyBg({ cardBgOpacity: Number(cardOpacityRange.value) });
+        });
+
+        document.getElementById("myBgReset").addEventListener("click", function () {
+          try { localStorage.removeItem(MY_KEY); } catch (e) {}
+          renderEffective();
+          loadPanelFromStore();
+        });
+      })();
+    </script>
+
+    <!-- 访问统计埋点：向 /api/track 上报一次页面访问（前端判定当日UV/会话SV） -->
+    <script is:inline>
+      (function () {
+        try {
+          var path = location.pathname || "/";
+          // 后台/管理页不统计
+          if (/^\/(admin|manage|nav-admin|github-admin|relay-admin|stats-admin)/.test(path)) return;
+
+          var today = new Date().toISOString().slice(0, 10);
+          var lastDay = "";
+          try { lastDay = localStorage.getItem("visit_day") || ""; } catch (e) {}
+          var newVisitor = lastDay !== today;
+          if (newVisitor) { try { localStorage.setItem("visit_day", today); } catch (e) {} }
+
+          var newSession = false;
+          try {
+            if (!sessionStorage.getItem("visit_session")) {
+              sessionStorage.setItem("visit_session", "1");
+              newSession = true;
+            }
+          } catch (e) {}
+
+          fetch("/api/track", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: path, ref: document.referrer || "", newVisitor: newVisitor, newSession: newSession }),
+            keepalive: true,
+          }).catch(function () {});
+        } catch (e) {}
+      })();
+    </script>
+
+    <style is:global>
+      /* Improve Page speed */
+      /* https://css-tricks.com/almanac/properties/c/content-visibility/ */
+      img {
+        content-visibility: auto;
+      }
+
+      /* 全站内容卡片背景透明度：只改变卡片底色，不影响文字和图片 */
+      .site-card { background-color: rgb(255 255 255 / var(--card-bg-opacity, 1)) !important; }
+      html.dark .site-card { background-color: rgb(30 41 59 / var(--card-bg-opacity, 1)) !important; }
+
+      /* 设置了背景图后：把「裸露在背景上」的文字（时钟、站名、导航栏链接、
+         区块标题等）统一改成浅色并加投影，保证在深色/花色背景上也能看清。
+         注意：卡片内部（导航链接、博客卡片）有自己的白色底，不受影响。 */
+      html.has-bg #clock,
+      html.has-bg #greeting,
+      html.has-bg #tzinfo,
+      html.has-bg header a,
+      html.has-bg header button,
+      html.has-bg header span,
+      html.has-bg h2,
+      html.has-bg footer,
+      html.has-bg footer a {
+        color: #fff !important;
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+      }
+      /* 导航栏链接 hover 时高亮色保持可辨识 */
+      html.has-bg header a:hover,
+      html.has-bg header button:hover {
+        color: #c7d2fe !important;
+      }
+    </style>
+  </body>
+</html>

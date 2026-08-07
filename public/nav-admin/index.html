@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>导航管理 | 我的导航博客</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    .drag-over { border-color: #6366f1 !important; background: #eef2ff; }
+    .dragging { opacity: 0.4; }
+    [contenteditable]:focus { outline: 2px solid #6366f1; border-radius: 4px; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <!-- 登录遮罩 -->
+  <div id="loginMask" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
+    <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm">
+      <h1 class="text-xl font-bold text-center mb-1">🔐 导航管理后台</h1>
+      <p class="text-sm text-slate-500 text-center mb-6">请输入密码</p>
+      <input id="pwd" type="password" placeholder="密码" class="w-full px-4 py-3 border-2 border-slate-200 rounded-lg mb-3 focus:border-indigo-500 outline-none" />
+      <p id="pwdErr" class="text-red-500 text-sm mb-3 hidden">密码错误</p>
+      <button id="loginBtn" class="w-full py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700">登录</button>
+      <a href="/" class="block text-center text-indigo-600 text-sm mt-4 hover:underline">← 返回首页</a>
+    </div>
+  </div>
+
+  <!-- 主体 -->
+  <div id="app" class="hidden max-w-5xl mx-auto p-4 md:p-8">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">🧭 导航链接管理</h1>
+      <div class="flex gap-2">
+        <button id="addCatBtn" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">+ 添加分类</button>
+        <button id="saveBtn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">💾 保存全部</button>
+      </div>
+    </div>
+
+    <p class="text-sm text-slate-500 mb-4">💡 拖动分类标题或链接卡片可调整顺序；点击文字可直接编辑；填 URL 后点「取图标」自动获取。改完记得点右上角<b>保存全部</b>。</p>
+
+    <!-- 站点背景图设置 -->
+    <div class="bg-white rounded-xl shadow p-4 mb-6">
+      <h2 class="font-bold text-slate-800 mb-3">🖼️ 小屋背景图</h2>
+      <label class="block text-sm text-slate-600 mb-1">背景图片 URL（留空则用默认纯色背景）</label>
+      <div class="flex flex-wrap gap-2 items-center">
+        <input id="bgUrl" type="text" placeholder="粘贴图片直链，如 https://example.com/bg.jpg"
+          class="flex-1 min-w-[240px] px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-indigo-500 outline-none" />
+        <button id="bgUploadBtn" type="button" class="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">📁 上传图片</button>
+        <input id="bgFile" type="file" accept="image/*" class="hidden" />
+      </div>
+      <div class="flex flex-wrap gap-2 items-center mt-2">
+        <div class="flex items-center gap-2">
+          <label class="text-sm text-slate-600 whitespace-nowrap">适应</label>
+          <select id="bgFit" class="px-3 py-1.5 border-2 border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500">
+            <option value="cover">铺满（裁掉超出部分）</option>
+            <option value="blur">完整+模糊填充（竖图推荐）</option>
+            <option value="contain">完整显示（两侧留白）</option>
+            <option value="stretch">拉伸铺满（可能变形）</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-sm text-slate-600 whitespace-nowrap">变暗</label>
+          <input id="bgDim" type="range" min="0" max="80" value="40" class="w-28" />
+          <span id="bgDimVal" class="text-sm text-slate-500 w-10">40%</span>
+        </div>
+        <button id="bgSaveBtn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 whitespace-nowrap">保存背景</button>
+        <button id="bgClearBtn" class="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">恢复默认</button>
+      </div>
+      <div class="flex flex-wrap gap-2 items-center mt-3 pt-3 border-t border-slate-100">
+        <div class="flex items-center gap-2">
+          <label class="text-sm text-slate-600 whitespace-nowrap">全站内容卡片不透明度</label>
+          <input id="cardOpacity" type="range" min="0.3" max="1" step="0.05" value="1" class="w-28" />
+          <span id="cardOpacityVal" class="text-sm text-slate-500 w-10">100%</span>
+        <span class="text-xs text-slate-400">导航、博客、GitHub、中转等页面</span>
+        </div>
+        <button id="cardOpacitySave" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">应用</button>
+      </div>
+      <p class="text-xs text-slate-400 mt-2">💡 两种方式任选：① 粘贴图片直链（含 GIF 动图）；② 点「上传图片」选本地图片（静态图自动压缩，GIF 保留动画原样保存，建议 4MB 内）。<b>适应模式</b>：横图用「铺满」；竖图/比例不符建议用「完整+模糊填充」，整张图都看得到、周围用同图模糊铺满不留白。「变暗」用于压暗背景保证文字清晰。保存后全站生效。</p>
+      <div id="bgPreview" class="mt-3 h-40 rounded-lg bg-slate-100 border border-slate-200 hidden relative overflow-hidden">
+        <div id="bgPreviewBlur" class="absolute inset-0 bg-cover bg-center" style="filter:blur(16px);transform:scale(1.1);display:none;"></div>
+        <div id="bgPreviewMain" class="absolute inset-0 bg-center bg-no-repeat"></div>
+      </div>
+    </div>
+
+    <div id="cats" class="space-y-6"></div>
+    <p id="emptyHint" class="text-center text-slate-400 py-12 hidden">还没有分类，点右上角「添加分类」开始。</p>
+  </div>
+
+  <!-- 状态提示 -->
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg hidden z-50"></div>
+
+  <script>
+    let PASSWORD = sessionStorage.getItem('nav_pwd') || '';
+    let data = { categories: [] };
+
+    const $ = (s) => document.querySelector(s);
+    const uid = () => 'id-' + Math.random().toString(36).slice(2, 9);
+
+    function toast(msg, ok = true) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg z-50 ' + (ok ? 'bg-emerald-600' : 'bg-red-600');
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 2500);
+    }
+
+    // ---------- 登录 ----------
+    async function doLogin() {
+      const pwd = $('#pwd').value.trim();
+      if (!pwd) return;
+      const btn = $('#loginBtn');
+      btn.disabled = true; const oldTxt = btn.textContent; btn.textContent = '校验中…';
+      try {
+        const res = await fetch('/api/verify', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + pwd },
+        });
+        if (!res.ok) {
+          toast('密码错误', false);
+          $('#pwd').value = '';
+          btn.disabled = false; btn.textContent = oldTxt;
+          return;
+        }
+      } catch (e) {
+        toast('校验失败：' + e.message, false);
+        btn.disabled = false; btn.textContent = oldTxt;
+        return;
+      }
+      PASSWORD = pwd;
+      sessionStorage.setItem('nav_pwd', pwd);
+      btn.disabled = false; btn.textContent = oldTxt;
+      $('#loginMask').classList.add('hidden');
+      $('#app').classList.remove('hidden');
+      await loadData();
+    }
+    $('#loginBtn').addEventListener('click', doLogin);
+    $('#pwd').addEventListener('keypress', (e) => { if (e.key === 'Enter') doLogin(); });
+
+    // 已登录过则直接进入
+    if (PASSWORD) {
+      $('#loginMask').classList.add('hidden');
+      $('#app').classList.remove('hidden');
+    }
+
+    // ---------- 数据加载 ----------
+    async function loadData() {
+      try {
+        const res = await fetch('/api/nav');
+        const d = await res.json();
+        if (d && Array.isArray(d.categories)) {
+          data = d;
+          // 补全 id
+          data.categories.forEach(c => {
+            if (!c.id) c.id = uid();
+            (c.links || []).forEach(l => { if (!l.id) l.id = uid(); });
+          });
+        }
+      } catch (e) {
+        toast('加载失败：' + e.message, false);
+      }
+      render();
+    }
+    if (PASSWORD) loadData();
+
+    // ---------- 渲染 ----------
+    function render() {
+      const wrap = $('#cats');
+      wrap.innerHTML = '';
+      $('#emptyHint').classList.toggle('hidden', data.categories.length > 0);
+
+      data.categories.forEach((cat) => {
+        const catEl = document.createElement('div');
+        catEl.className = 'bg-white rounded-xl shadow p-4 border-2 border-transparent';
+        catEl.draggable = true;
+        catEl.dataset.catId = cat.id;
+
+        catEl.innerHTML = `
+          <div class="flex items-center justify-between mb-3 pb-2 border-b">
+            <div class="flex items-center gap-2 flex-1">
+              <span class="cursor-move text-slate-400">⠿</span>
+              <span class="cat-name font-bold text-lg text-slate-800" contenteditable spellcheck="false">${escapeHtml(cat.name)}</span>
+            </div>
+            <div class="flex gap-2">
+              <button class="add-link text-emerald-600 text-sm hover:underline">+ 链接</button>
+              <button class="del-cat text-red-500 text-sm hover:underline">删除分类</button>
+            </div>
+          </div>
+          <div class="links grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+        `;
+
+        // 分类名编辑
+        catEl.querySelector('.cat-name').addEventListener('input', (e) => {
+          cat.name = e.target.textContent;
+        });
+        // 添加链接
+        catEl.querySelector('.add-link').addEventListener('click', () => {
+          cat.links = cat.links || [];
+          cat.links.push({ id: uid(), title: '新链接', url: '', icon: '' });
+          render();
+        });
+        // 删除分类
+        catEl.querySelector('.del-cat').addEventListener('click', () => {
+          if (confirm(`确定删除分类「${cat.name}」及其所有链接？`)) {
+            data.categories = data.categories.filter(c => c.id !== cat.id);
+            render();
+          }
+        });
+
+        // 分类拖拽排序
+        catEl.addEventListener('dragstart', (e) => {
+          if (e.target !== catEl) return; // 只响应分类本身
+          e.dataTransfer.setData('type', 'cat');
+          e.dataTransfer.setData('catId', cat.id);
+          catEl.classList.add('dragging');
+        });
+        catEl.addEventListener('dragend', () => catEl.classList.remove('dragging'));
+        catEl.addEventListener('dragover', (e) => {
+          if (e.dataTransfer.getData('type') === 'cat') { e.preventDefault(); catEl.classList.add('drag-over'); }
+        });
+        catEl.addEventListener('dragleave', () => catEl.classList.remove('drag-over'));
+        catEl.addEventListener('drop', (e) => {
+          catEl.classList.remove('drag-over');
+          const t = e.dataTransfer.getData('type');
+          if (t === 'cat') {
+            e.preventDefault();
+            const fromId = e.dataTransfer.getData('catId');
+            reorder(data.categories, fromId, cat.id);
+            render();
+          }
+        });
+
+        // 渲染链接
+        const linksWrap = catEl.querySelector('.links');
+        (cat.links || []).forEach((link) => {
+          linksWrap.appendChild(renderLink(cat, link));
+        });
+
+        wrap.appendChild(catEl);
+      });
+    }
+
+    function renderLink(cat, link) {
+      const el = document.createElement('div');
+      el.className = 'flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200';
+      el.draggable = true;
+      el.dataset.linkId = link.id;
+
+      el.innerHTML = `
+        <span class="cursor-move text-slate-300">⠿</span>
+        <img class="icon-preview w-6 h-6 rounded ${link.icon ? '' : 'hidden'}" src="${link.icon || ''}" onerror="this.classList.add('hidden')" />
+        <div class="flex-1 min-w-0">
+          <div class="link-title text-sm font-medium text-slate-700 truncate" contenteditable spellcheck="false">${escapeHtml(link.title)}</div>
+          <div class="link-url text-xs text-slate-400 break-all" contenteditable spellcheck="false">${escapeHtml(link.url)}</div>
+        </div>
+        <button class="fetch-icon text-xs text-indigo-600 hover:underline whitespace-nowrap">取图标</button>
+        <button class="del-link text-xs text-red-500 hover:underline">删</button>
+      `;
+
+      el.querySelector('.link-title').addEventListener('input', (e) => { link.title = e.target.textContent; });
+      el.querySelector('.link-url').addEventListener('input', (e) => { link.url = e.target.textContent; });
+
+      el.querySelector('.fetch-icon').addEventListener('click', async () => {
+        if (!link.url) { toast('请先填写 URL', false); return; }
+        try {
+          const res = await fetch('/api/favicon?url=' + encodeURIComponent(link.url));
+          const d = await res.json();
+          if (d.icon) {
+            link.icon = d.icon;
+            const img = el.querySelector('.icon-preview');
+            img.src = d.icon;
+            img.classList.remove('hidden');
+            toast('图标已获取');
+          } else {
+            toast('未获取到图标', false);
+          }
+        } catch (err) { toast('获取失败：' + err.message, false); }
+      });
+
+      el.querySelector('.del-link').addEventListener('click', () => {
+        cat.links = cat.links.filter(l => l.id !== link.id);
+        render();
+      });
+
+      // 链接拖拽（同分类内排序）
+      el.addEventListener('dragstart', (e) => {
+        e.stopPropagation();
+        e.dataTransfer.setData('type', 'link');
+        e.dataTransfer.setData('linkId', link.id);
+        e.dataTransfer.setData('catId', cat.id);
+        el.classList.add('dragging');
+      });
+      el.addEventListener('dragend', () => el.classList.remove('dragging'));
+      el.addEventListener('dragover', (e) => {
+        if (e.dataTransfer.getData('type') === 'link') { e.preventDefault(); e.stopPropagation(); el.classList.add('drag-over'); }
+      });
+      el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+      el.addEventListener('drop', (e) => {
+        el.classList.remove('drag-over');
+        if (e.dataTransfer.getData('type') !== 'link') return;
+        e.preventDefault();
+        e.stopPropagation();
+        const fromCatId = e.dataTransfer.getData('catId');
+        const fromLinkId = e.dataTransfer.getData('linkId');
+        if (fromCatId === cat.id) {
+          reorder(cat.links, fromLinkId, link.id);
+        } else {
+          // 跨分类移动
+          const fromCat = data.categories.find(c => c.id === fromCatId);
+          const moving = fromCat.links.find(l => l.id === fromLinkId);
+          fromCat.links = fromCat.links.filter(l => l.id !== fromLinkId);
+          const idx = cat.links.findIndex(l => l.id === link.id);
+          cat.links.splice(idx, 0, moving);
+        }
+        render();
+      });
+
+      return el;
+    }
+
+    function reorder(arr, fromId, toId) {
+      const fromIdx = arr.findIndex(x => x.id === fromId);
+      const toIdx = arr.findIndex(x => x.id === toId);
+      if (fromIdx === -1 || toIdx === -1) return;
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, item);
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ---------- 操作按钮 ----------
+    $('#addCatBtn').addEventListener('click', () => {
+      data.categories.push({ id: uid(), name: '新分类', links: [] });
+      render();
+    });
+
+    $('#saveBtn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/nav', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + PASSWORD,
+          },
+          body: JSON.stringify(data),
+        });
+        const d = await res.json();
+        if (res.ok && d.ok) {
+          toast('✅ 保存成功，首页已同步');
+        } else if (res.status === 401) {
+          toast('密码错误，请重新登录', false);
+          sessionStorage.removeItem('nav_pwd');
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          toast('保存失败：' + (d.error || '未知错误'), false);
+        }
+      } catch (e) {
+        toast('保存失败：' + e.message, false);
+      }
+    });
+
+    // ---------- 背景图设置 ----------
+    const bgUrl = $('#bgUrl');
+    const bgDim = $('#bgDim');
+    const bgDimVal = $('#bgDimVal');
+    const bgFit = $('#bgFit');
+    const bgPreview = $('#bgPreview');
+    const bgPreviewMain = $('#bgPreviewMain');
+    const bgPreviewBlur = $('#bgPreviewBlur');
+
+    function updateBgPreview() {
+      const u = bgUrl.value.trim();
+      if (!u) { bgPreview.classList.add('hidden'); return; }
+      const safe = "url('" + u.replace(/'/g, "%27") + "')";
+      const fit = bgFit.value;
+      bgPreview.classList.remove('hidden');
+      bgPreviewMain.style.backgroundImage = safe;
+      bgPreviewBlur.style.display = 'none';
+      if (fit === 'contain') {
+        bgPreviewMain.style.backgroundSize = 'contain';
+      } else if (fit === 'stretch') {
+        bgPreviewMain.style.backgroundSize = '100% 100%';
+      } else if (fit === 'blur') {
+        bgPreviewMain.style.backgroundSize = 'contain';
+        bgPreviewBlur.style.backgroundImage = safe;
+        bgPreviewBlur.style.display = 'block';
+      } else {
+        bgPreviewMain.style.backgroundSize = 'cover';
+      }
+    }
+    bgDim.addEventListener('input', () => { bgDimVal.textContent = bgDim.value + '%'; });
+    bgUrl.addEventListener('input', updateBgPreview);
+    bgFit.addEventListener('change', updateBgPreview);
+
+    // 上传本地图片：前端压缩后转为 data URI 存入设置（省去图床）
+    // GIF 特殊处理：canvas 压缩会丢失动画，故 GIF 原样保存以保留动图效果。
+    $('#bgUploadBtn').addEventListener('click', () => $('#bgFile').click());
+    $('#bgFile').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { toast('请选择图片文件', false); return; }
+
+      const isGif = file.type === 'image/gif';
+
+      // GIF：不经 canvas，直接读原始 data URI 保留动画
+      if (isGif) {
+        // GIF 无法无损压缩，体积过大会拖慢加载并可能超出存储上限，做个提醒
+        if (file.size > 4 * 1024 * 1024) {
+          toast('GIF 超过 4MB，可能加载较慢或保存失败，建议换更小的', false);
+        } else {
+          toast('正在处理 GIF…');
+        }
+        const gr = new FileReader();
+        gr.onload = (ev) => {
+          bgUrl.value = ev.target.result; // data:image/gif;base64,...
+          updateBgPreview();
+          toast('GIF 已就绪，点「保存背景」生效');
+        };
+        gr.onerror = () => toast('读取 GIF 失败', false);
+        gr.readAsDataURL(file);
+        return;
+      }
+
+      // 其它静态图：压缩成 JPEG
+      toast('正在处理图片…');
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          // 等比缩放到最大宽 1920，压缩成 JPEG，控制体积
+          const maxW = 1920;
+          let w = img.width, h = img.height;
+          if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          let quality = 0.82;
+          let dataUri = canvas.toDataURL('image/jpeg', quality);
+          // 若仍偏大，逐步降质到 ~1.2MB 以内（KV 单值上限较高，但控制体积更快）
+          while (dataUri.length > 1200000 && quality > 0.4) {
+            quality -= 0.1;
+            dataUri = canvas.toDataURL('image/jpeg', quality);
+          }
+          bgUrl.value = dataUri;
+          updateBgPreview();
+          toast('图片已就绪，点「保存背景」生效');
+        };
+        img.onerror = () => toast('图片解析失败', false);
+        img.src = ev.target.result;
+      };
+      reader.onerror = () => toast('读取文件失败', false);
+      reader.readAsDataURL(file);
+    });
+
+    // 载入当前设置
+    let _cardOpacity = 1.0;
+    fetch('/api/settings').then(r => r.json()).then(s => {
+      if (s) {
+        bgUrl.value = s.backgroundUrl || '';
+        bgDim.value = (typeof s.backgroundDim === 'number' ? s.backgroundDim : 40);
+        bgDimVal.textContent = bgDim.value + '%';
+        bgFit.value = ['cover','contain','blur','stretch'].includes(s.backgroundFit) ? s.backgroundFit : 'cover';
+        _cardOpacity = typeof s.cardBgOpacity === 'number' ? s.cardBgOpacity : 1.0;
+        const opSlider = $('#cardOpacity');
+        const opVal = $('#cardOpacityVal');
+        if (opSlider) { opSlider.value = _cardOpacity; opVal.textContent = Math.round(_cardOpacity * 100) + '%'; }
+        updateBgPreview();
+      }
+    }).catch(() => {});
+
+    // ---------- 分类卡片不透明度 ----------
+    const cardOpacitySlider = $('#cardOpacity');
+    const cardOpacityVal = $('#cardOpacityVal');
+    if (cardOpacitySlider) {
+      cardOpacitySlider.addEventListener('input', () => {
+        const v = parseFloat(cardOpacitySlider.value);
+        cardOpacityVal.textContent = Math.round(v * 100) + '%';
+      });
+    }
+    $('#cardOpacitySave').addEventListener('click', () => {
+      const op = parseFloat(cardOpacitySlider ? cardOpacitySlider.value : _cardOpacity);
+      saveBg({ backgroundUrl: bgUrl.value.trim(), backgroundDim: Number(bgDim.value), backgroundFit: bgFit.value, cardBgOpacity: op });
+    });
+
+    async function saveBg(settings) {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
+        body: JSON.stringify(settings),
+      });
+      const d = await res.json();
+      if (res.ok && d.ok) {
+        try { localStorage.setItem('site_settings', JSON.stringify(d.settings)); } catch (e) {}
+        toast('✅ 已保存，全站生效');
+      } else if (res.status === 401) {
+        toast('密码错误，请重新登录', false);
+        sessionStorage.removeItem('nav_pwd');
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        toast('保存失败：' + (d.error || '未知错误'), false);
+      }
+    }
+
+    $('#bgSaveBtn').addEventListener('click', () => {
+      saveBg({ backgroundUrl: bgUrl.value.trim(), backgroundDim: Number(bgDim.value), backgroundFit: bgFit.value, cardBgOpacity: parseFloat(cardOpacitySlider ? cardOpacitySlider.value : _cardOpacity) });
+    });
+    $('#bgClearBtn').addEventListener('click', () => {
+      bgUrl.value = '';
+      updateBgPreview();
+      saveBg({ backgroundUrl: '', backgroundDim: Number(bgDim.value), backgroundFit: bgFit.value, cardBgOpacity: parseFloat(cardOpacitySlider ? cardOpacitySlider.value : _cardOpacity) });
+    });
+  </script>
+</body>
+</html>

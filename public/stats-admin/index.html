@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>运营看板 | 吾荣小屋</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <!-- 登录遮罩 -->
+  <div id="loginMask" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900">
+    <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm">
+      <h1 class="text-xl font-bold text-center mb-1">📊 运营看板</h1>
+      <p class="text-sm text-slate-500 text-center mb-6">请输入密码</p>
+      <input id="pwd" type="password" placeholder="密码" class="w-full px-4 py-3 border-2 border-slate-200 rounded-lg mb-3 focus:border-slate-500 outline-none" />
+      <button id="loginBtn" class="w-full py-3 bg-slate-700 text-white rounded-lg font-semibold hover:bg-slate-900">登录</button>
+      <a href="/" class="block text-center text-slate-600 underline text-sm mt-4">← 返回首页</a>
+    </div>
+  </div>
+
+  <div id="app" class="hidden max-w-6xl mx-auto p-4 md:p-8">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">📊 运营看板</h1>
+      <div class="flex items-center gap-2">
+        <select id="rangeSel" class="px-3 py-2 border-2 border-slate-200 rounded-lg text-sm outline-none focus:border-slate-500">
+          <option value="7">近 7 天</option>
+          <option value="30" selected>近 30 天</option>
+          <option value="90">近 90 天</option>
+        </select>
+        <button id="refreshBtn" class="px-4 py-2 bg-slate-700 text-white rounded-lg text-sm font-semibold hover:bg-slate-900">刷新</button>
+      </div>
+    </div>
+
+    <p id="loading" class="text-center text-slate-400 py-12">加载中…</p>
+    <div id="dash" class="hidden space-y-6">
+      <!-- 概览卡片 -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-500">今日访问 PV</div>
+          <div id="kpiTodayPv" class="text-2xl font-bold text-slate-800 mt-1">-</div>
+          <div id="kpiTodayPvDelta" class="text-xs mt-1"></div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-500">今日独立访客 UV</div>
+          <div id="kpiTodayUv" class="text-2xl font-bold text-slate-800 mt-1">-</div>
+          <div id="kpiTodayUvDelta" class="text-xs mt-1"></div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div id="kpiRangePvLabel" class="text-xs text-slate-500">区间总 PV</div>
+          <div id="kpiRangePv" class="text-2xl font-bold text-slate-800 mt-1">-</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div id="kpiRangeUvLabel" class="text-xs text-slate-500">区间独立访客</div>
+          <div id="kpiRangeUv" class="text-2xl font-bold text-slate-800 mt-1">-</div>
+        </div>
+      </div>
+
+      <!-- 访问趋势折线（纯 SVG） -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="font-bold text-slate-800">访问趋势</h2>
+          <div class="flex gap-3 text-xs text-slate-500">
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-1 rounded bg-indigo-500"></span>PV</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-1 rounded bg-emerald-500"></span>UV</span>
+          </div>
+        </div>
+        <div id="trend" class="w-full overflow-x-auto"></div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- 热门页面 -->
+        <div class="bg-white rounded-xl shadow p-4">
+          <h2 class="font-bold text-slate-800 mb-3">🔥 热门页面 Top</h2>
+          <div id="topPaths" class="space-y-1.5 text-sm"></div>
+        </div>
+        <!-- 来源 -->
+        <div class="bg-white rounded-xl shadow p-4">
+          <h2 class="font-bold text-slate-800 mb-3">🌐 访问来源 Top</h2>
+          <div id="topRefs" class="space-y-1.5 text-sm"></div>
+        </div>
+      </div>
+
+      <!-- 导航链接点击统计 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <h2 class="font-bold text-slate-800 mb-3">🖱️ 导航/邀请链接点击 Top</h2>
+        <div id="topClicks" class="space-y-1.5 text-sm"></div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- 设备占比 -->
+        <div class="bg-white rounded-xl shadow p-4">
+          <h2 class="font-bold text-slate-800 mb-3">📱 设备占比</h2>
+          <div id="devices" class="text-sm"></div>
+        </div>
+        <!-- 活跃时段 -->
+        <div class="bg-white rounded-xl shadow p-4">
+          <h2 class="font-bold text-slate-800 mb-3">🕐 活跃时段（北京时间）</h2>
+          <div id="hours" class="flex items-end gap-0.5 h-24"></div>
+        </div>
+      </div>
+
+      <!-- 链接连通性检查 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+          <h2 class="font-bold text-slate-800">🔎 导航 / 中转 / GitHub 连通性</h2>
+          <button id="checkLinksBtn" class="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600">检查全部</button>
+        </div>
+        <p id="checkLinksHint" class="text-xs text-slate-400 mb-3">仅检查地址是否能连接，不代表目标站点业务正常或邀请码有效。</p>
+        <div id="linkChecks" class="space-y-1.5 text-sm"></div>
+      </div>
+
+      <!-- 内容运维概览 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <h2 class="font-bold text-slate-800 mb-3">🗂️ 内容概览</h2>
+        <div id="content" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-center"></div>
+      </div>
+
+      <p class="text-xs text-slate-400">
+        说明：统计基于前台页面埋点，独立访客(UV)按「每设备每天」判定，会话(SV)按浏览器会话判定，均为近似值；日期分界和活跃时段均按北京时间（UTC+8）。数据保留约 120 天。后台页面不计入统计。
+      </p>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg hidden z-50"></div>
+
+  <script>
+    let PASSWORD = sessionStorage.getItem('nav_pwd') || '';
+    const $ = (s) => document.querySelector(s);
+
+    function toast(msg, ok = true) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg z-50 ' + (ok ? 'bg-emerald-600' : 'bg-red-600');
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 2800);
+    }
+    function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    function num(n){ return (n||0).toLocaleString('en-US'); }
+
+    async function doLogin() {
+      const pwd = $('#pwd').value.trim(); if (!pwd) return;
+      const btn = $('#loginBtn'); btn.disabled = true; const old = btn.textContent; btn.textContent = '校验中…';
+      try {
+        const res = await fetch('/api/verify', { method: 'POST', headers: { 'Authorization': 'Bearer ' + pwd } });
+        if (!res.ok) { toast('密码错误', false); $('#pwd').value=''; btn.disabled=false; btn.textContent=old; return; }
+      } catch (e) { toast('校验失败：'+e.message, false); btn.disabled=false; btn.textContent=old; return; }
+      PASSWORD = pwd; sessionStorage.setItem('nav_pwd', pwd);
+      btn.disabled=false; btn.textContent=old;
+      $('#loginMask').classList.add('hidden'); $('#app').classList.remove('hidden');
+      load();
+    }
+    $('#loginBtn').addEventListener('click', doLogin);
+    $('#pwd').addEventListener('keypress', (e) => { if (e.key === 'Enter') doLogin(); });
+    if (PASSWORD) { $('#loginMask').classList.add('hidden'); $('#app').classList.remove('hidden'); }
+
+    $('#refreshBtn').addEventListener('click', load);
+    $('#rangeSel').addEventListener('change', load);
+    $('#checkLinksBtn').addEventListener('click', checkLinks);
+
+    async function checkLinks() {
+      const btn = $('#checkLinksBtn');
+      btn.disabled = true; btn.textContent = '检查中…';
+      $('#linkChecks').innerHTML = '<p class="text-slate-400">正在逐个检查，请稍候…</p>';
+      try {
+        const res = await fetch('/api/check-links', { headers: { 'Authorization': 'Bearer ' + PASSWORD } });
+        const d = await res.json();
+        if (!res.ok) throw Error(d.error || '检查失败');
+        renderLinkChecks(d.results || []);
+        $('#checkLinksHint').textContent = '检查完成：' + new Date(d.checkedAt).toLocaleString('zh-CN') + '；仅代表当前检查时刻。';
+      } catch (e) { $('#linkChecks').innerHTML = '<p class="text-red-500">' + esc(e.message) + '</p>'; }
+      btn.disabled = false; btn.textContent = '重新检查';
+    }
+
+    function renderLinkChecks(results) {
+      const box = $('#linkChecks');
+      if (!results.length) { box.innerHTML = '<p class="text-slate-400">暂无可检查链接</p>'; return; }
+      const order = { '导航': 1, '中转': 2, 'GitHub': 3 };
+      results.sort((a,b) => Number(a.ok)-Number(b.ok) || (order[a.type]||9)-(order[b.type]||9));
+      box.innerHTML = results.map(x => {
+        const badge = x.ok ? '<span class="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">正常 ' + x.status + '</span>' : (x.reachable ? '<span class="text-amber-700 bg-amber-100 px-2 py-0.5 rounded">可连接 ' + x.status + '</span>' : '<span class="text-red-700 bg-red-100 px-2 py-0.5 rounded">无法检测' + (x.status ? ' ' + x.status : '') + '</span>');
+        return '<div class="flex items-center gap-2 border-b border-slate-100 py-2"><span class="w-12 text-xs text-slate-400">' + esc(x.type) + '</span><div class="flex-1 min-w-0"><div class="truncate font-medium text-slate-700" title="' + esc(x.url) + '">' + esc(x.name) + '</div><div class="truncate text-xs text-slate-400">' + esc(x.url) + '</div><div class="truncate text-xs text-slate-500">' + esc(x.message || '') + '</div></div>' + badge + '<span class="w-14 text-right text-xs text-slate-400">' + x.ms + 'ms</span></div>';
+      }).join('');
+    }
+
+    async function load() {
+      $('#loading').classList.remove('hidden');
+      $('#dash').classList.add('hidden');
+      const days = $('#rangeSel').value;
+      try {
+        const res = await fetch('/api/stats?days=' + days, { headers: { 'Authorization': 'Bearer ' + PASSWORD } });
+        if (res.status === 401) { toast('密码错误，请重新登录', false); sessionStorage.removeItem('nav_pwd'); setTimeout(()=>location.reload(),1500); return; }
+        const d = await res.json();
+        if (!d.ok) { $('#loading').textContent = '加载失败：' + (d.error || '未知错误'); return; }
+        render(d);
+      } catch (e) {
+        $('#loading').textContent = '加载失败：' + e.message;
+      }
+    }
+
+    function delta(cur, prev) {
+      if (!prev) return cur > 0 ? '<span class="text-emerald-600">新增</span>' : '<span class="text-slate-400">—</span>';
+      const p = Math.round((cur - prev) / prev * 100);
+      if (p > 0) return '<span class="text-emerald-600">↑ ' + p + '% vs 昨日</span>';
+      if (p < 0) return '<span class="text-red-500">↓ ' + Math.abs(p) + '% vs 昨日</span>';
+      return '<span class="text-slate-400">持平</span>';
+    }
+
+    function render(d) {
+      $('#loading').classList.add('hidden');
+      $('#dash').classList.remove('hidden');
+
+      $('#kpiTodayPv').textContent = num(d.today.pv);
+      $('#kpiTodayUv').textContent = num(d.today.uv);
+      $('#kpiTodayPvDelta').innerHTML = delta(d.today.pv, d.yesterday.pv);
+      $('#kpiTodayUvDelta').innerHTML = delta(d.today.uv, d.yesterday.uv);
+      $('#kpiRangePvLabel').textContent = '近 ' + d.range.days + ' 天总 PV';
+      $('#kpiRangeUvLabel').textContent = '近 ' + d.range.days + ' 天独立访客';
+      $('#kpiRangePv').textContent = num(d.totals.pv);
+      $('#kpiRangeUv').textContent = num(d.totals.uv);
+
+      renderTrend(d.daily);
+      renderBars('#topPaths', d.topPaths, true);
+      renderBars('#topRefs', d.topRefs, false);
+      renderClicks(d.topClicks || []);
+      renderDevices(d.devices);
+      renderHours(d.hours);
+      renderContent(d.content);
+    }
+
+    function renderTrend(daily) {
+      const W = Math.max(600, daily.length * 22), H = 180, pad = 30;
+      const maxV = Math.max(1, ...daily.map(x => Math.max(x.pv, x.uv)));
+      const xw = (W - pad * 2) / Math.max(1, daily.length - 1);
+      const y = (v) => H - pad - (v / maxV) * (H - pad * 2);
+      const x = (i) => pad + i * xw;
+      const line = (arr, key, color) => {
+        const pts = arr.map((p, i) => x(i) + ',' + y(p[key])).join(' ');
+        return '<polyline fill="none" stroke="' + color + '" stroke-width="2" points="' + pts + '" />';
+      };
+      const dots = (arr, key, color) => arr.map((p, i) =>
+        '<circle cx="' + x(i) + '" cy="' + y(p[key]) + '" r="2.5" fill="' + color + '"><title>' + p.date + ' ' + key.toUpperCase() + '=' + p[key] + '</title></circle>'
+      ).join('');
+      // x 轴稀疏标签
+      const step = Math.ceil(daily.length / 10);
+      const labels = daily.map((p, i) => (i % step === 0 || i === daily.length - 1)
+        ? '<text x="' + x(i) + '" y="' + (H - 8) + '" font-size="9" fill="#94a3b8" text-anchor="middle">' + p.date.slice(5) + '</text>' : '').join('');
+      $('#trend').innerHTML = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">' +
+        '<line x1="' + pad + '" y1="' + (H - pad) + '" x2="' + (W - pad) + '" y2="' + (H - pad) + '" stroke="#e2e8f0"/>' +
+        line(daily, 'pv', '#6366f1') + line(daily, 'uv', '#10b981') +
+        dots(daily, 'pv', '#6366f1') + dots(daily, 'uv', '#10b981') + labels + '</svg>';
+    }
+
+    function pathLabel(path) {
+      const labels = {
+        '/': '首页',
+        '/github/': 'GitHub 专区',
+        '/relay/': 'Token 中转',
+        '/blog/': '博客',
+        '/about/': '关于页面',
+        '/relay-probe/': '中转探测',
+      };
+      return labels[path] || path;
+    }
+
+    function renderBars(sel, list, isPath) {
+      const box = $(sel);
+      if (!list || !list.length) { box.innerHTML = '<p class="text-slate-400 text-sm">暂无数据</p>'; return; }
+      const max = Math.max(...list.map(x => x.count));
+      box.innerHTML = list.map(item => {
+        const w = Math.round(item.count / max * 100);
+        const label = esc(isPath ? pathLabel(item.key) : item.key);
+        return '<div class="flex items-center gap-2">' +
+          '<div class="w-40 truncate text-slate-600" title="' + label + '">' + label + '</div>' +
+          '<div class="flex-1 bg-slate-100 rounded h-4 relative">' +
+            '<div class="bg-indigo-400 h-4 rounded" style="width:' + w + '%"></div>' +
+          '</div>' +
+          '<div class="w-12 text-right text-slate-500">' + num(item.count) + '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function renderClicks(list) {
+      const box = $('#topClicks');
+      if (!list.length) { box.innerHTML = '<p class="text-slate-400 text-sm">暂无点击数据</p>'; return; }
+      const max = Math.max(...list.map(x => x.count));
+      box.innerHTML = list.map(item => {
+        const w = Math.round(item.count / max * 100);
+        return '<div class="flex items-center gap-2">' +
+          '<div class="w-48 truncate text-slate-600" title="' + esc(item.title) + '">' + esc(item.title) + '</div>' +
+          '<div class="flex-1 bg-slate-100 rounded h-4"><div class="bg-emerald-400 h-4 rounded" style="width:' + w + '%"></div></div>' +
+          '<div class="w-12 text-right text-slate-500">' + num(item.count) + '</div></div>';
+      }).join('');
+    }
+
+    function renderDevices(dev) {
+      const total = (dev.mobile || 0) + (dev.desktop || 0);
+      const box = $('#devices');
+      if (!total) { box.innerHTML = '<p class="text-slate-400">暂无数据</p>'; return; }
+      const mp = Math.round(dev.mobile / total * 100);
+      const dp = 100 - mp;
+      box.innerHTML =
+        '<div class="flex h-6 rounded overflow-hidden mb-3">' +
+          '<div class="bg-indigo-500" style="width:' + dp + '%"></div>' +
+          '<div class="bg-amber-400" style="width:' + mp + '%"></div>' +
+        '</div>' +
+        '<div class="flex justify-between text-slate-600">' +
+          '<span>💻 桌面 ' + dp + '%（' + num(dev.desktop) + '）</span>' +
+          '<span>📱 移动 ' + mp + '%（' + num(dev.mobile) + '）</span>' +
+        '</div>';
+    }
+
+    function renderHours(hours) {
+      const box = $('#hours');
+      const vals = [];
+      for (let h = 0; h < 24; h++) vals.push(hours[String(h)] || 0);
+      const max = Math.max(1, ...vals);
+      box.innerHTML = vals.map((v, h) => {
+        const ht = Math.round(v / max * 100);
+        return '<div class="flex-1 flex flex-col items-center justify-end h-full" title="' + h + ':00 UTC = ' + v + ' 次">' +
+          '<div class="w-full bg-indigo-400 rounded-t" style="height:' + ht + '%"></div>' +
+          (h % 3 === 0 ? '<span class="text-[9px] text-slate-400 mt-0.5">' + h + '</span>' : '<span class="text-[9px] mt-0.5">&nbsp;</span>') +
+        '</div>';
+      }).join('');
+    }
+
+    function renderContent(c) {
+      const items = [
+        { label: '导航分类', v: c.navCategories },
+        { label: '导航链接', v: c.navLinks },
+        { label: 'GitHub 项目', v: c.githubProjects },
+        { label: '中转站', v: c.relaySites },
+        { label: '全站背景', v: c.hasBackground ? '已设置' : '未设置' },
+      ];
+      $('#content').innerHTML = items.map(it =>
+        '<div class="bg-slate-50 rounded-lg p-3">' +
+          '<div class="text-xl font-bold text-slate-800">' + (typeof it.v === 'number' ? num(it.v) : it.v) + '</div>' +
+          '<div class="text-xs text-slate-500 mt-1">' + it.label + '</div>' +
+        '</div>'
+      ).join('');
+    }
+
+    if (PASSWORD) load();
+  </script>
+</body>
+</html>

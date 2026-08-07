@@ -1,0 +1,28 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+import Sectionhead from "@/components/sectionhead.astro";
+---
+
+<Layout title="About">
+  <Container>
+    <Sectionhead>
+      <Fragment slot="title"><span data-i18n="关于|About">关于</span></Fragment>
+      <Fragment slot="desc"><span data-i18n="关于吾荣与这个小屋|About Wurong and this little nook">关于吾荣与这个小屋</span></Fragment>
+    </Sectionhead>
+
+    <div class="flex flex-col gap-6 mx-auto max-w-3xl mt-16">
+      <h2 class="font-bold text-3xl text-gray-800 dark:text-gray-100" data-i18n="你好，我是吾荣 👋|Hi, I’m Wurong 👋">
+        你好，我是吾荣 👋
+      </h2>
+      <p class="text-lg leading-relaxed text-slate-500 dark:text-slate-400"
+        data-i18n="这里是吾荣小屋——我收藏常用网站、记录技术笔记和生活想法的地方。希望这些整理好的导航和文章，也能帮到路过的你。|This is Wurong’s Nook — where I keep my favorite websites and jot down tech notes and thoughts on life. I hope these curated links and posts are useful to you too.">
+        这里是吾荣小屋——我收藏常用网站、记录技术笔记和生活想法的地方。希望这些整理好的导航和文章，也能帮到路过的你。
+      </p>
+      <p class="text-lg leading-relaxed text-slate-500 dark:text-slate-400"
+        data-i18n="欢迎通过博客留下你的想法，我们保持联系。|Feel free to reach out through the blog — let’s stay in touch.">
+        欢迎通过博客留下你的想法，我们保持联系。
+      </p>
+    </div>
+  </Container>
+</Layout>

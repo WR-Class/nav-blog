@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub 专区管理 | 吾荣小屋</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .drag-over { border-color: #6366f1 !important; background: #eef2ff; }
+    .dragging { opacity: 0.4; }
+    [contenteditable]:focus { outline: 2px solid #6366f1; border-radius: 4px; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <!-- 登录遮罩 -->
+  <div id="loginMask" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900">
+    <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm">
+      <h1 class="text-xl font-bold text-center mb-1">🐙 GitHub 专区管理</h1>
+      <p class="text-sm text-slate-500 text-center mb-6">请输入密码</p>
+      <input id="pwd" type="password" placeholder="密码" class="w-full px-4 py-3 border-2 border-slate-200 rounded-lg mb-3 focus:border-indigo-500 outline-none" />
+      <p id="pwdErr" class="text-red-500 text-sm mb-3 hidden">密码错误</p>
+      <button id="loginBtn" class="w-full py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-900">登录</button>
+      <a href="/" class="block text-center text-indigo-600 text-sm mt-4 hover:underline">← 返回首页</a>
+    </div>
+  </div>
+
+  <!-- 主体 -->
+  <div id="app" class="hidden max-w-4xl mx-auto p-4 md:p-8">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">🐙 GitHub 专区管理</h1>
+      <div class="flex gap-2 flex-wrap">
+        <button id="saveBtn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">💾 保存全部</button>
+      </div>
+    </div>
+
+    <!-- 添加项目 -->
+    <div class="bg-white rounded-xl shadow p-4 mb-6">
+      <label class="block text-sm font-medium text-slate-700 mb-2">粘贴 GitHub 项目地址，自动获取信息</label>
+      <div class="flex gap-2">
+        <input id="repoInput" type="text" placeholder="例如 https://github.com/withastro/astro 或 withastro/astro"
+          class="flex-1 px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-indigo-500 outline-none" />
+        <button id="fetchBtn" class="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 whitespace-nowrap">获取并添加</button>
+      </div>
+      <p id="fetchMsg" class="text-sm mt-2 hidden"></p>
+    </div>
+
+    <p class="text-sm text-slate-500 mb-4">💡 拖动卡片可排序；点击标题/摘要可直接修改；「重新抓取」会用最新 GitHub 信息覆盖。改完点右上角<b>保存全部</b>。</p>
+
+    <div id="projects" class="space-y-3"></div>
+    <p id="emptyHint" class="text-center text-slate-400 py-12 hidden">还没有项目，在上方粘贴 GitHub 地址添加。</p>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg hidden z-50"></div>
+
+  <script>
+    let PASSWORD = sessionStorage.getItem('nav_pwd') || '';
+    let data = { projects: [] };
+
+    const $ = (s) => document.querySelector(s);
+    const uid = () => 'gh-' + Math.random().toString(36).slice(2, 9);
+
+    function toast(msg, ok = true) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg z-50 ' + (ok ? 'bg-emerald-600' : 'bg-red-600');
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 2800);
+    }
+
+    async function doLogin() {
+      const pwd = $('#pwd').value.trim();
+      if (!pwd) return;
+      const btn = $('#loginBtn');
+      btn.disabled = true; const oldTxt = btn.textContent; btn.textContent = '校验中…';
+      try {
+        const res = await fetch('/api/verify', { method: 'POST', headers: { 'Authorization': 'Bearer ' + pwd } });
+        if (!res.ok) { toast('密码错误', false); $('#pwd').value=''; btn.disabled=false; btn.textContent=oldTxt; return; }
+      } catch (e) { toast('校验失败：'+e.message, false); btn.disabled=false; btn.textContent=oldTxt; return; }
+      PASSWORD = pwd;
+      sessionStorage.setItem('nav_pwd', pwd);
+      btn.disabled=false; btn.textContent=oldTxt;
+      $('#loginMask').classList.add('hidden');
+      $('#app').classList.remove('hidden');
+      loadData();
+    }
+    $('#loginBtn').addEventListener('click', doLogin);
+    $('#pwd').addEventListener('keypress', (e) => { if (e.key === 'Enter') doLogin(); });
+    if (PASSWORD) {
+      $('#loginMask').classList.add('hidden');
+      $('#app').classList.remove('hidden');
+    }
+
+    async function loadData() {
+      try {
+        const res = await fetch('/api/github');
+        const d = await res.json();
+        if (d && Array.isArray(d.projects)) {
+          data = d;
+          data.projects.forEach(p => { if (!p.id) p.id = uid(); });
+        }
+      } catch (e) { toast('加载失败：' + e.message, false); }
+      render();
+    }
+    if (PASSWORD) loadData();
+
+    // 抓取并添加项目
+    $('#fetchBtn').addEventListener('click', async () => {
+      const repo = $('#repoInput').value.trim();
+      if (!repo) { toast('请先粘贴 GitHub 地址', false); return; }
+      const msg = $('#fetchMsg');
+      msg.textContent = '正在获取…';
+      msg.className = 'text-sm mt-2 text-slate-500';
+      msg.classList.remove('hidden');
+      try {
+        const res = await fetch('/api/github-info?readme=1&repo=' + encodeURIComponent(repo));
+        const d = await res.json();
+        if (!res.ok) { msg.textContent = '❌ ' + (d.error || '获取失败'); msg.className = 'text-sm mt-2 text-red-500'; return; }
+        data.projects.push({
+          id: uid(),
+          name: d.name,
+          fullName: d.fullName,
+          description: d.description,
+          url: d.url,
+          stars: d.stars,
+          language: d.language,
+          topics: d.topics,
+          avatar: d.avatar,
+          readme: d.readme || '',
+        });
+        $('#repoInput').value = '';
+        msg.textContent = '✅ 已添加：' + d.fullName;
+        msg.className = 'text-sm mt-2 text-emerald-600';
+        render();
+      } catch (e) {
+        msg.textContent = '❌ 请求失败：' + e.message;
+        msg.className = 'text-sm mt-2 text-red-500';
+      }
+    });
+
+    function render() {
+      const wrap = $('#projects');
+      wrap.innerHTML = '';
+      $('#emptyHint').classList.toggle('hidden', data.projects.length > 0);
+
+      data.projects.forEach((p) => {
+        const el = document.createElement('div');
+        el.className = 'bg-white rounded-xl shadow p-4 border-2 border-transparent flex gap-3';
+        el.draggable = true;
+        el.dataset.id = p.id;
+        el.innerHTML = `
+          <span class="cursor-move text-slate-300 pt-1">⠿</span>
+          <img src="${p.avatar || ''}" class="w-10 h-10 rounded" onerror="this.style.visibility='hidden'" />
+          <div class="flex-1 min-w-0">
+            <div class="proj-name font-bold text-slate-800" contenteditable spellcheck="false">${escapeHtml(p.name)}</div>
+            <div class="proj-desc text-sm text-slate-500 mt-1" contenteditable spellcheck="false">${escapeHtml(p.description)}</div>
+            <div class="text-xs text-slate-400 mt-1">⭐ ${p.stars ?? 0} · ${escapeHtml(p.language || '')} · <a href="${escapeHtml(p.url)}" target="_blank" class="text-indigo-500 hover:underline">${escapeHtml(p.url)}</a></div>
+          </div>
+          <div class="flex flex-col gap-1 whitespace-nowrap">
+            <button class="refetch text-xs text-indigo-600 hover:underline">重新抓取</button>
+            <button class="del text-xs text-red-500 hover:underline">删除</button>
+          </div>
+        `;
+        el.querySelector('.proj-name').addEventListener('input', (e) => { p.name = e.target.textContent; });
+        el.querySelector('.proj-desc').addEventListener('input', (e) => { p.description = e.target.textContent; });
+        el.querySelector('.del').addEventListener('click', () => {
+          if (confirm('确定删除「' + p.name + '」？')) { data.projects = data.projects.filter(x => x.id !== p.id); render(); }
+        });
+        el.querySelector('.refetch').addEventListener('click', async () => {
+          toast('正在重新抓取…');
+          try {
+            const res = await fetch('/api/github-info?readme=1&repo=' + encodeURIComponent(p.url));
+            const d = await res.json();
+            if (res.ok) {
+              Object.assign(p, { name: d.name, fullName: d.fullName, description: d.description, url: d.url, stars: d.stars, language: d.language, topics: d.topics, avatar: d.avatar, readme: d.readme || p.readme });
+              render(); toast('已更新');
+            } else { toast(d.error || '抓取失败', false); }
+          } catch (e) { toast('失败：' + e.message, false); }
+        });
+
+        // 拖拽排序
+        el.addEventListener('dragstart', (e) => { e.dataTransfer.setData('id', p.id); el.classList.add('dragging'); });
+        el.addEventListener('dragend', () => el.classList.remove('dragging'));
+        el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
+        el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+        el.addEventListener('drop', (e) => {
+          e.preventDefault(); el.classList.remove('drag-over');
+          const fromId = e.dataTransfer.getData('id');
+          const fromIdx = data.projects.findIndex(x => x.id === fromId);
+          const toIdx = data.projects.findIndex(x => x.id === p.id);
+          if (fromIdx > -1 && toIdx > -1) {
+            const [item] = data.projects.splice(fromIdx, 1);
+            data.projects.splice(toIdx, 0, item);
+            render();
+          }
+        });
+
+        wrap.appendChild(el);
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    $('#saveBtn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/github', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
+          body: JSON.stringify(data),
+        });
+        const d = await res.json();
+        if (res.ok && d.ok) toast('✅ 保存成功，首页已同步');
+        else if (res.status === 401) { toast('密码错误，请重新登录', false); sessionStorage.removeItem('nav_pwd'); setTimeout(() => location.reload(), 1500); }
+        else toast('保存失败：' + (d.error || '未知错误'), false);
+      } catch (e) { toast('保存失败：' + e.message, false); }
+    });
+  </script>
+</body>
+</html>

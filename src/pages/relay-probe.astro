@@ -1,0 +1,205 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+---
+
+<Layout title="倍率与价格探测">
+  <Container>
+    <div class="mt-14 mb-8">
+      <div class="flex justify-end mb-4">
+        <a href="/relay" class="inline-flex items-center gap-1 px-4 py-2 bg-slate-700 hover:bg-slate-900 dark:bg-slate-600 dark:hover:bg-slate-500 text-white rounded-lg text-base font-semibold shadow-sm transition-colors" data-i18n="← 返回 Token 中转|← Back to Token Relay">← 返回 Token 中转</a>
+      </div>
+      <h1 class="text-4xl lg:text-5xl font-bold text-slate-800 dark:text-slate-100 mt-3 mb-3" data-i18n="倍率与价格探测|Ratio & Price Probe">倍率与价格探测</h1>
+      <p class="text-lg text-slate-500 dark:text-slate-400" data-i18n="输入 new-api 中转站地址，自动获取模型倍率、每百万 token 价格与注册白嫖信息|Enter a new-api relay URL to fetch model ratios, per-million-token prices and sign-up info">输入 new-api 中转站地址，自动获取模型倍率、每百万 token 价格与注册白嫖信息</p>
+    </div>
+
+    <!-- 探测输入 -->
+    <div class="site-card bg-white dark:bg-slate-800 rounded-xl shadow p-4 mb-6">
+      <div class="flex flex-wrap gap-2 items-end">
+        <div class="flex-1 min-w-[240px]">
+          <label class="block text-sm text-slate-600 dark:text-slate-300 mb-1" data-i18n="站点地址|Site URL">站点地址</label>
+          <input id="siteUrl" type="text" placeholder="https://oai.codes/"
+            class="w-full px-4 py-2 border-2 border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:border-indigo-500 outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm text-slate-600 dark:text-slate-300 mb-1" data-i18n="基准价 ¥/1M (倍率=1)|Base ¥/1M (ratio=1)">基准价 ¥/1M (倍率=1)</label>
+          <input id="basePrice" type="number" step="0.1" value="2"
+            class="w-28 px-3 py-2 border-2 border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:border-indigo-500 outline-none" />
+        </div>
+        <button id="probeBtn" class="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 whitespace-nowrap" data-i18n="探测|Probe">探测</button>
+      </div>
+      <p class="text-xs text-slate-400 mt-2" data-i18n="提示：基准价用于把倍率换算成人民币；new-api 标准为 ¥2/1M（1:1 汇率）。若站点用分档表达式，则直接采用其单价。|Tip: base price converts ratios to CNY; new-api default is ¥2/1M (1:1). If the site uses tiered expressions, its exact prices are used.">提示：基准价用于把倍率换算成人民币；new-api 标准为 ¥2/1M（1:1 汇率）。若站点用分档表达式，则直接采用其单价。</p>
+      <p id="probeMsg" class="text-sm mt-2 hidden"></p>
+    </div>
+
+    <!-- 站点信息 + 注册白嫖信息 -->
+    <div id="siteInfo" class="hidden mb-6"></div>
+
+    <!-- 分组选择 -->
+    <div id="groupBar" class="hidden flex-wrap gap-2 mb-4"></div>
+
+    <!-- 结果表格 -->
+    <div id="result" class="site-card hidden overflow-x-auto bg-white dark:bg-slate-800 rounded-xl shadow">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-500 dark:text-slate-400 border-b dark:border-slate-700">
+            <th class="p-3" data-i18n="模型|Model">模型</th>
+            <th class="p-3 text-right" data-i18n="模型倍率|Ratio">模型倍率</th>
+            <th class="p-3 text-right" data-i18n="补全倍率|Compl.">补全倍率</th>
+            <th class="p-3 text-right" data-i18n="输入 ¥/1M|Input ¥/1M">输入 ¥/1M</th>
+            <th class="p-3 text-right" data-i18n="输出 ¥/1M|Output ¥/1M">输出 ¥/1M</th>
+            <th class="p-3 text-right" data-i18n="缓存 ¥/1M|Cache ¥/1M">缓存 ¥/1M</th>
+          </tr>
+        </thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+    </div>
+  </Container>
+
+  <script is:inline>
+    (function () {
+      const $ = (s) => document.querySelector(s);
+      let DATA = null;
+      let curGroup = 'default';
+
+      function msg(text, type) {
+        const el = $('#probeMsg');
+        el.textContent = text;
+        el.className = 'text-sm mt-2 ' + (type === 'err' ? 'text-red-500' : type === 'ok' ? 'text-emerald-600' : 'text-slate-500');
+        el.classList.remove('hidden');
+      }
+      function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+      function fmt(n) { if (n == null || isNaN(n)) return '-'; return Number(n).toFixed(4).replace(/\.?0+$/, ''); }
+
+      function parseExpr(expr) {
+        if (!expr) return null;
+        const seg = expr.match(/tier\("standard",\s*([^)]+)\)/) || expr.match(/tier\("[^"]+",\s*([^)]+)\)/);
+        const body = seg ? seg[1] : expr;
+        const p = body.match(/p \* ([\d.]+)/);
+        const c = body.match(/c \* ([\d.]+)/);
+        const cr = body.match(/cr \* ([\d.]+)/);
+        if (!p) return null;
+        return { input: parseFloat(p[1]), output: c ? parseFloat(c[1]) : 0, cache: cr ? parseFloat(cr[1]) : null };
+      }
+
+      function computeRow(m, base, groupRatio) {
+        let input, output, cache;
+        const expr = parseExpr(m.billing_expr);
+        if (expr) { input = expr.input; output = expr.output; cache = expr.cache; }
+        else {
+          const mr = m.model_ratio || 0; const cr = m.completion_ratio || 0;
+          input = mr * base; output = mr * cr * base;
+          cache = (m.cache_ratio != null) ? mr * m.cache_ratio * base : null;
+        }
+        input *= groupRatio; output *= groupRatio; if (cache != null) cache *= groupRatio;
+        return { input, output, cache };
+      }
+
+      function render() {
+        if (!DATA) return;
+        const base = parseFloat($('#basePrice').value) || 2;
+        const gr = (DATA.groupRatio && DATA.groupRatio[curGroup] != null) ? DATA.groupRatio[curGroup] : 1;
+        const body = $('#resultBody');
+        const rows = DATA.models
+          .filter((m) => m.groups.includes(curGroup) || curGroup === 'default')
+          .map((m) => {
+            if (m.quota_type === 1) {
+              return `<tr class="border-b dark:border-slate-700/50"><td class="p-3 font-medium text-slate-700 dark:text-slate-200">${esc(m.name)}</td><td class="p-3 text-right text-slate-400" colspan="5">按次计费 ¥${esc(m.model_price)} / 次（不受分组倍率影响）</td></tr>`;
+            }
+            const c = computeRow(m, base, gr);
+            return `<tr class="border-b dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/30">
+              <td class="p-3 font-medium text-slate-700 dark:text-slate-200">${esc(m.name)}</td>
+              <td class="p-3 text-right text-slate-500 dark:text-slate-400">${m.model_ratio ?? '-'}</td>
+              <td class="p-3 text-right text-slate-500 dark:text-slate-400">${m.completion_ratio ?? '-'}</td>
+              <td class="p-3 text-right text-slate-700 dark:text-slate-200">¥${fmt(c.input)}</td>
+              <td class="p-3 text-right text-slate-700 dark:text-slate-200">¥${fmt(c.output)}</td>
+              <td class="p-3 text-right text-slate-500 dark:text-slate-400">${c.cache != null ? '¥'+fmt(c.cache) : '-'}</td>
+            </tr>`;
+          }).join('');
+        body.innerHTML = rows || '<tr><td class="p-6 text-center text-slate-400" colspan="6">该分组暂无模型</td></tr>';
+        $('#result').classList.remove('hidden');
+      }
+
+      function renderGroupBar() {
+        const bar = $('#groupBar');
+        const ratios = DATA.groupRatio || { default: 1 };
+        const names = DATA.usableGroup || {};
+        bar.innerHTML = Object.keys(ratios).map((g) => {
+          const label = names[g] ? `${g}（${names[g]}）` : g;
+          return `<button data-g="${esc(g)}" class="grp-btn px-3 py-1.5 rounded-lg text-sm border ${g===curGroup?'bg-indigo-600 text-white border-indigo-600':'bg-white dark:bg-slate-700 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}">${esc(label)} <span class="opacity-70">×${ratios[g]}</span></button>`;
+        }).join('');
+        bar.querySelectorAll('.grp-btn').forEach((b) => { b.addEventListener('click', () => { curGroup = b.dataset.g; renderGroupBar(); render(); }); });
+        bar.classList.remove('hidden'); bar.classList.add('flex');
+      }
+
+      function renderSiteInfo() {
+        const el = $('#siteInfo');
+        const ri = DATA.registerInfo || {};
+        const tags = [];
+        function tag(t,cls){return `<span class="inline-block text-xs px-2 py-0.5 rounded ${cls}">${esc(t)}</span>`;}
+        if (ri.registerEnabled) tags.push(tag('开放注册','bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'));
+        else tags.push(tag('注册关闭','bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'));
+        if (ri.emailVerification) tags.push(tag('需邮箱验证','bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'));
+        if (ri.turnstile) tags.push(tag('有人机验证','bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'));
+        else tags.push(tag('无人机验证','bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'));
+        if (ri.checkin) tags.push(tag('每日签到送额度','bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'));
+        const oauth = [];
+        if (ri.githubOAuth) oauth.push('GitHub'); if (ri.linuxdoOAuth) oauth.push('LinuxDo'); if (ri.telegramOAuth) oauth.push('Telegram'); if (ri.wechatLogin) oauth.push('微信');
+        let ann='';
+        if (DATA.announcements && DATA.announcements.length) {
+          ann = '<div class="mt-3 text-sm text-slate-500 dark:text-slate-400 space-y-1">' + DATA.announcements.map((a)=>'📢 '+esc((a.content||'').slice(0,150))).join('<br>') + '</div>';
+        }
+        el.innerHTML = `<div class="site-card bg-white dark:bg-slate-800 rounded-xl shadow p-4">
+          <div class="flex items-center gap-3">
+            ${ri.logo?`<img src="${esc(ri.logo)}" class="w-8 h-8 rounded object-contain" onerror="this.style.display='none'"/>`:''}
+            <div class="font-bold text-slate-800 dark:text-slate-100">${esc(DATA.siteName || DATA.base)}</div>
+            <a href="${esc(DATA.base)}" target="_blank" class="text-xs text-slate-500 dark:text-slate-400 underline hover:text-slate-800 dark:hover:text-slate-200">${esc(DATA.base)}</a>
+          </div>
+          <div class="flex flex-wrap gap-1.5 mt-3">${tags.join('')}</div>
+          ${oauth.length?`<div class="text-xs text-slate-400 mt-2">登录方式：${esc(oauth.join(' / '))}</div>`:''}
+          <div class="text-xs text-slate-400 mt-1">额度单位：${esc(ri.quotaDisplayType||'?')}${ri.usdExchangeRate?(' · 汇率 '+ri.usdExchangeRate):''} · 共 ${DATA.models.length} 个模型</div>
+          ${ann}
+        </div>`;
+        el.classList.remove('hidden');
+      }
+
+      async function probe(url) {
+        url = url || $('#siteUrl').value.trim();
+        if (!url) { msg('请输入站点地址', 'err'); return; }
+        $('#siteUrl').value = url;
+        msg('正在探测…', 'info');
+        $('#siteInfo').classList.add('hidden'); $('#groupBar').classList.add('hidden'); $('#result').classList.add('hidden');
+        try {
+          const r = await fetch('/api/relay-probe?url=' + encodeURIComponent(url));
+          let d;
+          try { d = await r.json(); } catch (_) { d = null; }
+          DATA = d;
+          // 没拿到有效数据 / 明确报错 / 缺少模型列表 —— 统一提示不支持
+          if (!d || d.error || !Array.isArray(d.models) || d.models.length === 0) {
+            // 若拿到站点名或注册信息，仍展示基础信息，方便手动补充
+            if (d && (d.siteName || d.registerInfo)) {
+              msg('该站点不支持自动探测价格（仅获取到基础信息）', 'err');
+              renderSiteInfo();
+            } else {
+              msg('该站点不支持探测', 'err');
+            }
+            return;
+          }
+          const groupRatio = d.groupRatio || { default: 1 };
+          curGroup = (d.autoGroups && d.autoGroups[0]) || 'default';
+          if (!groupRatio[curGroup]) curGroup = Object.keys(groupRatio)[0] || 'default';
+          msg('✅ 探测成功，共 ' + d.models.length + ' 个模型', 'ok');
+          renderSiteInfo(); renderGroupBar(); render();
+        } catch (e) { msg('该站点不支持探测', 'err'); }
+      }
+
+      $('#probeBtn').addEventListener('click', () => probe());
+      $('#siteUrl').addEventListener('keypress', (e) => { if (e.key === 'Enter') probe(); });
+      $('#basePrice').addEventListener('input', () => { if (DATA && !DATA.error) render(); });
+
+      // 支持 URL 参数 ?url= 自动探测（从中转卡片跳转过来）
+      const q = new URLSearchParams(location.search).get('url');
+      if (q) probe(q);
+    })();
+  </script>
+</Layout>

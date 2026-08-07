@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>博客编辑器 | 吾荣小屋</title>
+<link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css">
+<script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,sans-serif}
+  .toastui-editor-defaultUI{border-radius:10px}
+  .toastui-editor-contents img{max-width:100%}
+  .toastui-editor-contents{font-size:15px}
+  #enEditor{font-family:monospace;font-size:14px;line-height:1.6}
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+<!-- 登录遮罩 -->
+<div id="loginMask" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-amber-500 to-orange-600">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm text-center">
+    <h1 class="text-xl font-bold mb-1">✍️ 博客管理后台</h1>
+    <p class="text-sm text-slate-500 mb-6">请输入管理密码</p>
+    <input id="pwd" type="password" placeholder="密码" class="w-full px-4 py-3 border-2 border-slate-200 rounded-lg mb-3 focus:border-amber-500 outline-none">
+    <p id="pwdErr" class="text-red-500 text-sm mb-3 hidden">密码错误</p>
+    <button id="loginBtn" class="w-full py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700">登录</button>
+    <a href="/" class="block text-center text-slate-500 text-sm mt-4 hover:underline">← 返回首页</a>
+  </div>
+</div>
+
+<!-- 英文翻译预览弹窗 -->
+<div id="previewMask" class="hidden fixed inset-0 z-50 bg-black/60 p-4 md:p-10">
+  <div class="bg-white rounded-xl max-w-5xl mx-auto h-full flex flex-col">
+    <div class="flex justify-between items-center p-4 border-b">
+      <strong>英文翻译预览（可编辑后复制到下方英文编辑区）</strong>
+      <div class="flex gap-2">
+        <button id="previewCopyBtn" class="px-3 py-1 rounded bg-emerald-500 text-white text-sm">复制到英文编辑区</button>
+        <button id="previewClose" class="px-3 py-1 rounded bg-slate-100">关闭</button>
+      </div>
+    </div>
+    <div id="englishPreview" class="flex-1 overflow-auto p-5"></div>
+  </div>
+</div>
+
+<!-- 主体 -->
+<main id="app" class="hidden max-w-7xl mx-auto p-4 md:p-6">
+  <div class="flex flex-wrap justify-between items-center gap-3 mb-5">
+    <h1 class="text-2xl font-bold">✍️ 博客编辑器</h1>
+    <div class="flex gap-2 flex-wrap">
+      <button id="newBtn" class="px-3 py-2 rounded-lg bg-white border text-sm">新建</button>
+      <button id="saveBtn" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold text-sm">💾 保存</button>
+      <button id="translateBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm">🔄 预览翻译</button>
+      <button id="deleteBtn" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white font-semibold text-sm">🗑️ 删除</button>
+      <a href="/manage/#blog" target="_top" class="px-3 py-2 text-sm text-slate-600 underline">返回管理面板</a>
+    </div>
+  </div>
+
+  <div class="grid lg:grid-cols-[260px_1fr] gap-5">
+    <!-- 文章列表 -->
+    <aside class="bg-white rounded-xl shadow p-4">
+      <h2 class="font-bold mb-3">文章列表</h2>
+      <div id="posts" class="space-y-1 text-sm"></div>
+    </aside>
+
+    <!-- 编辑区 -->
+    <section>
+      <!-- 元数据 -->
+      <div class="bg-white rounded-xl shadow p-4 mb-4 grid md:grid-cols-2 gap-3">
+        <input id="title" class="border rounded-lg px-3 py-2" placeholder="文章标题">
+        <input id="slug" class="border rounded-lg px-3 py-2" placeholder="slug（如 hello-world）">
+        <input id="snippet" class="border rounded-lg px-3 py-2" placeholder="摘要">
+        <input id="date" type="date" class="border rounded-lg px-3 py-2">
+        <input id="author" class="border rounded-lg px-3 py-2" placeholder="作者">
+        <input id="category" class="border rounded-lg px-3 py-2" placeholder="分类">
+        <input id="tags" class="border rounded-lg px-3 py-2 md:col-span-2" placeholder="标签，逗号分隔">
+        <input id="image" class="border rounded-lg px-3 py-2 md:col-span-2" placeholder="封面图 URL（可留空）">
+        <div class="md:col-span-2 flex gap-2 items-center">
+          <button id="uploadImageBtn" class="px-3 py-2 rounded-lg bg-white border text-sm">📁 选择封面图</button>
+          <input id="imageFile" type="file" accept="image/*" class="hidden">
+          <input id="imageAlt" class="flex-1 border rounded-lg px-3 py-2" placeholder="封面图说明（可留空）">
+        </div>
+        <label class="text-sm flex items-center gap-2"><input id="draft" type="checkbox"> 保存为草稿</label>
+      </div>
+
+      <!-- 中文编辑器 -->
+      <div class="bg-white rounded-xl shadow p-2 mb-4">
+        <div class="px-2 pt-2 pb-1 text-sm font-medium text-slate-600">📝 中文正文</div>
+        <div id="editor"></div>
+      </div>
+
+      <!-- 英文编辑区（可折叠） -->
+      <div class="bg-white rounded-xl shadow p-2 mb-4">
+        <div class="flex items-center justify-between px-2 pt-2 pb-1">
+          <span class="text-sm font-medium text-slate-600">🌐 英文正文（留空则保存时自动翻译）</span>
+          <button id="toggleEnBtn" class="text-xs text-indigo-600 hover:underline">展开/收起</button>
+        </div>
+        <div id="enSection" class="hidden p-2">
+          <textarea id="enEditor" rows="12" class="w-full border rounded-lg p-3" placeholder="可手动编辑英文正文，留空则保存时自动翻译生成"></textarea>
+          <p class="text-xs text-slate-400 mt-1">提示：点击「预览翻译」可查看自动翻译结果，确认后点击「复制到英文编辑区」手动修改。</p>
+        </div>
+      </div>
+
+      <p id="msg" class="text-sm mt-3"></p>
+    </section>
+  </div>
+</main>
+
+<script>
+let PASSWORD = sessionStorage.getItem('nav_pwd') || '';
+let posts = [], current = null, editor;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function msg(t, ok = false) {
+  $('#msg').textContent = t;
+  $('#msg').className = 'text-sm mt-3 ' + (ok ? 'text-emerald-600' : 'text-red-500');
+}
+
+// ---------- 登录 ----------
+async function doLogin() {
+  const pwd = $('#pwd').value.trim();
+  if (!pwd) return;
+  const btn = $('#loginBtn');
+  btn.disabled = true; btn.textContent = '校验中…';
+  try {
+    const res = await fetch('/api/verify', { method: 'POST', headers: { 'Authorization': 'Bearer ' + pwd } });
+    if (!res.ok) { $('#pwdErr').classList.remove('hidden'); btn.disabled = false; btn.textContent = '登录'; return; }
+  } catch (e) { $('#pwdErr').textContent = '校验失败：' + e.message; $('#pwdErr').classList.remove('hidden'); btn.disabled = false; btn.textContent = '登录'; return; }
+  PASSWORD = pwd;
+  sessionStorage.setItem('nav_pwd', pwd);
+  $('#loginMask').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  await loadPosts();
+}
+$('#loginBtn').addEventListener('click', doLogin);
+$('#pwd').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+
+// 已登录则直接进入
+if (PASSWORD) {
+  $('#loginMask').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+}
+
+// ---------- 文章列表 ----------
+async function loadPosts() {
+  try {
+    const res = await fetch('/api/blog', { headers: { 'Authorization': 'Bearer ' + PASSWORD } });
+    const d = await res.json();
+    posts = d.posts || [];
+    renderList();
+  } catch (e) { msg('加载列表失败：' + e.message); }
+}
+
+function renderList() {
+  const c = $('#posts');
+  if (!posts.length) { c.innerHTML = '<p class="text-slate-400">暂无文章</p>'; return; }
+  c.innerHTML = posts.map(p => `
+    <button data-slug="${esc(p.slug)}" class="post w-full text-left px-3 py-2 rounded hover:bg-amber-50 truncate ${current && current.slug === p.slug ? 'bg-amber-100 font-semibold' : ''}">
+      ${p.draft ? '🔒 ' : ''}${esc(p.title)}
+      <br><span class="text-xs text-slate-400">${esc(p.publishDate || '')}</span>
+    </button>`).join('');
+  document.querySelectorAll('.post').forEach(b => b.onclick = () => openPost(b.dataset.slug));
+}
+
+// ---------- 打开文章 ----------
+async function openPost(slug) {
+  try {
+    const res = await fetch('/api/blog?slug=' + encodeURIComponent(slug), { headers: { 'Authorization': 'Bearer ' + PASSWORD } });
+    if (!res.ok) { msg('加载失败：' + res.status); return; }
+    const d = await res.json();
+    const p = d.post;
+    current = p;
+    $('#title').value = p.title || '';
+    $('#slug').value = p.slug || '';
+    $('#snippet').value = p.snippet || '';
+    $('#date').value = p.publishDate || '';
+    $('#author').value = p.author || '吾荣';
+    $('#category').value = p.category || '';
+    $('#tags').value = (p.tags || []).join(', ');
+    $('#image').value = (p.image && p.image.src) || '';
+    $('#imageAlt').value = (p.image && p.image.alt) || '';
+    $('#draft').checked = !!p.draft;
+    editor.setMarkdown(p.body || '');
+    $('#enEditor').value = p.bodyEn || '';
+    if (p.bodyEn) { $('#enSection').classList.remove('hidden'); }
+    renderList();
+    msg('已加载：' + p.title, true);
+  } catch (e) { msg('加载失败：' + e.message); }
+}
+
+// ---------- 新建 ----------
+function fresh() {
+  current = null;
+  ['title', 'slug', 'snippet', 'author', 'category', 'tags', 'image', 'imageAlt'].forEach(id => $('#' + id).value = '');
+  $('#date').value = new Date().toISOString().slice(0, 10);
+  $('#author').value = '吾荣';
+  $('#draft').checked = false;
+  editor.setMarkdown('');
+  $('#enEditor').value = '';
+  $('#enSection').classList.add('hidden');
+  renderList();
+  msg('已新建空白文章', true);
+}
+
+// ---------- 保存 ----------
+async function save() {
+  const slug = $('#slug').value.trim().replace(/[^\w\-\u4e00-\u9fff]+/g, '-');
+  if (!slug || !$('#title').value.trim()) { msg('请填写标题和 slug'); return; }
+  const bodyEn = $('#enEditor').value.trim();
+  const payload = {
+    slug,
+    title: $('#title').value.trim(),
+    snippet: $('#snippet').value.trim(),
+    publishDate: $('#date').value || new Date().toISOString().slice(0, 10),
+    author: $('#author').value.trim() || '吾荣',
+    category: $('#category').value.trim() || '未分类',
+    tags: $('#tags').value.split(',').map(x => x.trim()).filter(Boolean),
+    image: { src: $('#image').value.trim(), alt: $('#imageAlt').value.trim() },
+    draft: $('#draft').checked,
+    body: editor.getMarkdown(),
+    bodyEn: bodyEn,
+    autoTranslate: !bodyEn, // 有手写英文则不自动翻译
+  };
+  try {
+    $('#saveBtn').disabled = true;
+    msg('正在保存…');
+    const res = await fetch('/api/blog', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!res.ok) throw Error(d.error || '保存失败');
+    msg('保存成功！' + (!bodyEn ? '（英文已自动翻译）' : ''), true);
+    current = d.post || { slug };
+    await loadPosts();
+    // 重新加载以获取翻译后的英文
+    if (!bodyEn && d.post && d.post.bodyEn) {
+      $('#enEditor').value = d.post.bodyEn;
+      $('#enSection').classList.remove('hidden');
+    }
+  } catch (e) { msg('保存失败：' + e.message); }
+  finally { $('#saveBtn').disabled = false; }
+}
+
+// ---------- 删除 ----------
+async function del() {
+  if (!current) { msg('请先选择要删除的文章'); return; }
+  if (!confirm('确认删除「' + current.title + '」？此操作不可撤销。')) return;
+  try {
+    const res = await fetch('/api/blog', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
+      body: JSON.stringify({ action: 'delete', slug: current.slug }),
+    });
+    if (!res.ok) { const d = await res.json(); throw Error(d.error || '删除失败'); }
+    msg('已删除：' + current.title, true);
+    fresh();
+    await loadPosts();
+  } catch (e) { msg('删除失败：' + e.message); }
+}
+
+// ---------- 翻译预览 ----------
+async function previewTranslate() {
+  if (!$('#title').value.trim()) { msg('请先填写标题'); return; }
+  try {
+    $('#translateBtn').disabled = true;
+    msg('正在生成翻译预览，请稍候…');
+    const res = await fetch('/api/translate-markdown?ts=' + Date.now(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: editor.getMarkdown(),
+        fields: { title: $('#title').value, snippet: $('#snippet').value, author: $('#author').value, category: $('#category').value, tags: $('#tags').value.split(',').map(x => x.trim()).filter(Boolean) },
+      }),
+    });
+    if (!res.ok) throw Error('翻译接口 HTTP ' + res.status);
+    const d = await res.json();
+    if (!d.text) throw Error('翻译返回空');
+    $('#englishPreview').innerHTML = '';
+    new toastui.Editor.factory({ el: $('#englishPreview'), viewer: true, initialValue: d.text });
+    $('#previewMask').classList.remove('hidden');
+    msg('翻译预览已生成', true);
+  } catch (e) { msg('翻译失败：' + e.message); }
+  finally { $('#translateBtn').disabled = false; }
+}
+
+// ---------- 图片上传 ----------
+async function uploadImage(blob, callback) {
+  try {
+    msg('上传图片中…');
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+    const res = await fetch('/api/blog-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
+      body: JSON.stringify({ dataUrl }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw Error(d.error || '上传失败');
+    callback(d.url);
+    msg('图片上传成功', true);
+  } catch (e) { msg('图片上传失败：' + e.message); }
+}
+
+// ---------- 事件绑定 ----------
+$('#newBtn').onclick = fresh;
+$('#saveBtn').onclick = save;
+$('#deleteBtn').onclick = del;
+$('#translateBtn').onclick = previewTranslate;
+$('#previewClose').onclick = () => $('#previewMask').classList.add('hidden');
+$('#previewCopyBtn').onclick = () => {
+  // 从预览区提取纯文本（markdown）
+  const md = $('#englishPreview').querySelector('.toastui-editor-contents')?.innerText || '';
+  $('#enEditor').value = md;
+  $('#enSection').classList.remove('hidden');
+  $('#previewMask').classList.add('hidden');
+  msg('已复制到英文编辑区，可手动修改后保存', true);
+};
+$('#toggleEnBtn').onclick = () => $('#enSection').classList.toggle('hidden');
+$('#uploadImageBtn').onclick = () => $('#imageFile').click();
+$('#imageFile').onchange = async () => {
+  const f = $('#imageFile').files[0];
+  if (!f) return;
+  await uploadImage(f, url => { $('#image').value = url; });
+  $('#imageFile').value = '';
+};
+
+// ---------- 初始化编辑器 ----------
+editor = new toastui.Editor({
+  el: $('#editor'),
+  height: '500px',
+  initialEditType: 'markdown',
+  previewStyle: 'vertical',
+  hooks: {
+    addImageBlobHook: async (blob, callback) => {
+      // 编辑器内插入图片：也上传到 KV
+      await uploadImage(blob, url => callback(url, ''));
+    },
+  },
+  placeholder: '在这里写中文正文…',
+});
+
+// 启动
+if (PASSWORD) loadPosts();
+</script>
+</body></html>

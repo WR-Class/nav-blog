@@ -1,0 +1,130 @@
+---
+import Container from "@/components/container.astro";
+import { Astronav, MenuItems, MenuIcon } from "astro-navbar";
+
+const menuitems = [
+  { zh: "导航", en: "Home", path: "/" },
+  { zh: "GitHub 专区", en: "GitHub", path: "/github" },
+  { zh: "Token 中转", en: "Relay", path: "/relay" },
+  { zh: "博客", en: "Blog", path: "/blog" },
+  { zh: "关于", en: "About", path: "/about" },
+];
+---
+
+<Container>
+  <header class="flex flex-col lg:flex-row justify-between items-center my-5">
+    <Astronav>
+      <div class="flex w-full lg:w-auto items-center justify-between">
+        <a href="/" class="text-lg">
+          <span class="font-bold text-slate-800 dark:text-slate-100" data-i18n="吾荣|Wurong's">吾荣</span><span
+            class="text-indigo-600 dark:text-indigo-400" data-i18n="小屋|Nook">小屋</span>
+        </a>
+        <div class="flex items-center gap-3 lg:hidden">
+          <!-- 移动端语言切换 -->
+          <button
+            id="langToggleMobile"
+            aria-label="切换语言 / Switch language"
+            class="flex items-center gap-1 text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"></path>
+            </svg>
+            <span class="text-xs font-semibold lang-label">EN</span>
+          </button>
+          <MenuIcon class="w-4 h-4 text-gray-800 dark:text-gray-200" />
+        </div>
+      </div>
+      <MenuItems class="hidden w-full lg:w-auto mt-2 lg:flex lg:mt-0 lg:items-center">
+        <ul class="flex flex-col lg:flex-row lg:gap-3 lg:items-center">
+          {
+            menuitems.map((item) => (
+              <li>
+                <a
+                  href={item.path}
+                  data-i18n={`${item.zh}|${item.en}`}
+                  class="flex lg:px-3 py-2 items-center text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 dark:hover:bg-slate-800 rounded-lg transition-colors">
+                  <span>{item.zh}</span>
+                </a>
+              </li>
+            ))
+          }
+          <!-- 桌面端语言切换图标 -->
+          <li class="hidden lg:block">
+            <button
+              id="langToggleDesktop"
+              aria-label="切换语言 / Switch language"
+              title="切换中英文 / Switch language"
+              class="flex items-center gap-1 lg:px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"></path>
+              </svg>
+              <span class="text-xs font-semibold lang-label">EN</span>
+            </button>
+          </li>
+        </ul>
+      </MenuItems>
+    </Astronav>
+  </header>
+</Container>
+
+<script is:inline>
+  (function () {
+    // 读取语言偏好：
+    //   1. 用户手动切换过 → 用保存的值（最高优先级）
+    //   2. 从未切换过 → 按浏览器/系统语言自动判断：中文地区用中文，其余一律英文
+    function detectLang() {
+      var langs = navigator.languages && navigator.languages.length
+        ? navigator.languages
+        : [navigator.language || navigator.userLanguage || ""];
+      // 只要首选语言里出现中文（zh、zh-CN、zh-TW…）就用中文，否则默认英文
+      for (var i = 0; i < langs.length; i++) {
+        if (/^zh\b/i.test(langs[i])) return "zh";
+      }
+      return "en";
+    }
+    function getLang() {
+      var saved = localStorage.getItem("site_lang");
+      if (saved === "zh" || saved === "en") return saved;
+      return detectLang();
+    }
+    function applyLang(lang) {
+      document.documentElement.setAttribute("data-lang", lang);
+      // 所有带 data-i18n="中文|English" 的元素切换文本
+      document.querySelectorAll("[data-i18n]").forEach(function (el) {
+        var parts = (el.getAttribute("data-i18n") || "").split("|");
+        if (parts.length === 2) {
+          el.textContent = lang === "en" ? parts[1] : parts[0];
+        }
+      });
+      // 切换按钮上的标签显示「将要切换到的语言」
+      document.querySelectorAll(".lang-label").forEach(function (el) {
+        el.textContent = lang === "en" ? "中" : "EN";
+      });
+      document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+    }
+    function toggleLang() {
+      var next = getLang() === "en" ? "zh" : "en";
+      localStorage.setItem("site_lang", next);
+      applyLang(next);
+      // 通知页面其它脚本（如首页导航）语言已变
+      window.dispatchEvent(new CustomEvent("langchange", { detail: next }));
+    }
+
+    function bind() {
+      var d = document.getElementById("langToggleDesktop");
+      var m = document.getElementById("langToggleMobile");
+      if (d) d.addEventListener("click", toggleLang);
+      if (m) m.addEventListener("click", toggleLang);
+      applyLang(getLang());
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", bind);
+    } else {
+      bind();
+    }
+    // 视图切换（Astro 客户端导航）后重新应用
+    document.addEventListener("astro:after-swap", bind);
+  })();
+</script>

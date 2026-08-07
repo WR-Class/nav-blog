@@ -1,0 +1,120 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+---
+
+<Layout title="GitHub 专区">
+  <Container>
+    <div class="mt-14 mb-10">
+      <div class="flex items-center gap-3 mb-3">
+        <svg class="w-8 h-8 text-slate-800 dark:text-slate-100" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.26.82-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.09-.745.083-.73.083-.73 1.205.085 1.84 1.237 1.84 1.237 1.07 1.834 2.807 1.304 3.492.997.108-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.93 0-1.31.468-2.38 1.236-3.22-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.3 1.23a11.5 11.5 0 013.003-.404c1.02.005 2.047.138 3.006.404 2.29-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.91 1.235 3.22 0 4.61-2.807 5.625-5.48 5.92.43.372.823 1.102.823 2.222v3.293c0 .32.216.694.825.576C20.565 21.796 24 17.297 24 12c0-6.63-5.37-12-12-12z"></path></svg>
+        <h1 class="text-4xl lg:text-5xl font-bold text-slate-800 dark:text-slate-100" data-i18n="GitHub 专区|GitHub Zone">GitHub 专区</h1>
+      </div>
+      <p class="text-lg text-slate-800 dark:text-slate-800" data-i18n="我收藏的优秀开源项目|Curated open-source projects I love">我收藏的优秀开源项目</p>
+    </div>
+
+    <div id="loading" class="text-center text-slate-400 py-20" data-i18n="正在加载项目…|Loading projects…">正在加载项目…</div>
+
+    <div id="githubGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-16"></div>
+
+    <p id="githubEmpty" class="text-center text-slate-400 py-20 hidden" data-i18n="还没有添加 GitHub 项目|No GitHub projects yet">还没有添加 GitHub 项目</p>
+  </Container>
+
+  <script>
+    function detectLang() {
+      const langs = (navigator.languages && navigator.languages.length)
+        ? navigator.languages : [navigator.language || ''];
+      for (let i = 0; i < langs.length; i++) {
+        if (/^zh\b/i.test(langs[i])) return 'zh';
+      }
+      return 'en';
+    }
+    function currentLang() {
+      const saved = localStorage.getItem('site_lang');
+      if (saved === 'zh' || saved === 'en') return saved;
+      return detectLang();
+    }
+
+    // 动态翻译（复用 /api/translate）
+    const trMemCache = {};
+    function trCacheKey(text) { return 'tr:en:' + text; }
+    async function translateBatch(texts) {
+      const uniq = [...new Set(texts.filter((t) => t && typeof t === 'string'))];
+      const need = [];
+      const result = {};
+      for (const t of uniq) {
+        if (trMemCache[t] !== undefined) { result[t] = trMemCache[t]; continue; }
+        const ls = localStorage.getItem(trCacheKey(t));
+        if (ls !== null) { trMemCache[t] = ls; result[t] = ls; continue; }
+        need.push(t);
+      }
+      if (need.length > 0) {
+        try {
+          const res = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texts: need, to: 'en' }),
+          });
+          const d = await res.json();
+          const trans = (d && d.translations) || [];
+          need.forEach((t, i) => {
+            const out = trans[i] || t;
+            trMemCache[t] = out;
+            try { localStorage.setItem(trCacheKey(t), out); } catch (e) {}
+            result[t] = out;
+          });
+        } catch (e) {
+          need.forEach((t) => { result[t] = t; });
+        }
+      }
+      return result;
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderGithub(projects) {
+      const grid = document.getElementById('githubGrid');
+      const empty = document.getElementById('githubEmpty');
+      document.getElementById('loading').classList.add('hidden');
+      if (!projects || projects.length === 0) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      grid.innerHTML = projects.map((p) => `
+        <a href="/gh?id=${encodeURIComponent(p.id)}"
+           class="site-card block bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow group">
+          <div class="flex items-center gap-3 mb-3">
+            <img src="${escapeHtml(p.avatar || '')}" class="w-10 h-10 rounded-lg" onerror="this.style.visibility='hidden'" />
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate">${escapeHtml(p.name)}</h3>
+          </div>
+          <p class="text-sm text-slate-500 dark:text-slate-400 line-clamp-2 min-h-[2.5rem]">${escapeHtml(p.description)}</p>
+          <div class="flex items-center gap-3 mt-4 text-xs text-slate-400">
+            <span>⭐ ${p.stars ?? 0}</span>
+            ${p.language ? '<span>' + escapeHtml(p.language) + '</span>' : ''}
+          </div>
+        </a>`).join('');
+    }
+
+    let ghCache = null;
+    async function loadAndRenderGithub() {
+      if (!ghCache) return;
+      if (currentLang() === 'en' && ghCache.length > 0) {
+        const descs = ghCache.map((p) => p.description).filter(Boolean);
+        const m = await translateBatch(descs);
+        renderGithub(ghCache.map((p) => ({ ...p, description: m[p.description] || p.description })));
+      } else {
+        renderGithub(ghCache);
+      }
+    }
+
+    fetch('/api/github')
+      .then((r) => r.json())
+      .then(async (d) => { ghCache = d.projects || []; await loadAndRenderGithub(); })
+      .catch(() => { ghCache = []; renderGithub([]); });
+    window.addEventListener('langchange', () => { if (ghCache) loadAndRenderGithub(); });
+  </script>
+</Layout>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token 中转管理 | 吾荣小屋</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .drag-over { border-color: #6366f1 !important; background: #eef2ff; }
+    .dragging { opacity: 0.4; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <!-- 登录遮罩 -->
+  <div id="loginMask" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-indigo-600 to-blue-700">
+    <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm">
+      <h1 class="text-xl font-bold text-center mb-1">🔑 Token 中转管理</h1>
+      <p class="text-sm text-slate-500 text-center mb-6">请输入密码</p>
+      <input id="pwd" type="password" placeholder="密码" class="w-full px-4 py-3 border-2 border-slate-200 rounded-lg mb-3 focus:border-indigo-500 outline-none" />
+      <button id="loginBtn" class="w-full py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700">登录</button>
+      <a href="/" class="block text-center text-indigo-600 text-sm mt-4 hover:underline">← 返回首页</a>
+    </div>
+  </div>
+
+  <div id="app" class="hidden max-w-4xl mx-auto p-4 md:p-8">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">🔑 Token 中转管理</h1>
+      <div class="flex gap-2 flex-wrap">
+        <button id="saveBtn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700">💾 保存全部</button>
+      </div>
+    </div>
+
+    <!-- 探测并添加 -->
+    <div class="bg-white rounded-xl shadow p-4 mb-6">
+      <label class="block text-sm font-medium text-slate-700 mb-2">粘贴中转站地址，自动探测后添加（探测能帮你预填站名/注册方式，其余手动补充）</label>
+      <div class="flex gap-2">
+        <input id="siteInput" type="text" placeholder="例如 https://oai.codes/"
+          class="flex-1 px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-indigo-500 outline-none" />
+        <button id="probeBtn" class="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 whitespace-nowrap">探测并添加</button>
+        <button id="addBlankBtn" class="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">+ 手动添加</button>
+      </div>
+      <p id="probeMsg" class="text-sm mt-2 hidden"></p>
+    </div>
+
+    <p class="text-sm text-slate-500 mb-4">💡 每个中转站填写下面五项；拖动卡片可排序。改完点右上角<b>保存全部</b>。</p>
+
+    <div id="sites" class="space-y-3"></div>
+    <p id="emptyHint" class="text-center text-slate-400 py-12 hidden">还没有中转站，在上方粘贴地址探测添加。</p>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg hidden z-50"></div>
+
+  <script>
+    let PASSWORD = sessionStorage.getItem('nav_pwd') || '';
+    let data = { sites: [] };
+    const $ = (s) => document.querySelector(s);
+    const uid = () => 'rl-' + Math.random().toString(36).slice(2, 9);
+
+    function toast(msg, ok = true) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg text-white text-sm shadow-lg z-50 ' + (ok ? 'bg-emerald-600' : 'bg-red-600');
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 2800);
+    }
+    function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+    // 从一段可能夹带干扰文字的文本里，提取出真正的 URL（干扰文字可能在前或后）
+    function extractUrl(text) {
+      if (!text) return '';
+      const s = String(text);
+      // 优先匹配 http(s):// 开头的完整链接
+      let m = s.match(/https?:\/\/[^\s"'<>）)】\]]+/i);
+      if (m) return m[0].replace(/[。，、；;,]+$/, '');
+      // 退而求其次：匹配 www. 或 域名/路径 形式
+      m = s.match(/(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^\s"'<>）)】\]]*)?/i);
+      if (m) return m[0].replace(/[。，、；;,]+$/, '');
+      return s.trim();
+    }
+
+    async function doLogin() {
+      const pwd = $('#pwd').value.trim(); if (!pwd) return;
+      const btn = $('#loginBtn');
+      btn.disabled = true; const oldTxt = btn.textContent; btn.textContent = '校验中…';
+      try {
+        const res = await fetch('/api/verify', { method: 'POST', headers: { 'Authorization': 'Bearer ' + pwd } });
+        if (!res.ok) { toast('密码错误', false); $('#pwd').value=''; btn.disabled=false; btn.textContent=oldTxt; return; }
+      } catch (e) { toast('校验失败：'+e.message, false); btn.disabled=false; btn.textContent=oldTxt; return; }
+      PASSWORD = pwd; sessionStorage.setItem('nav_pwd', pwd);
+      btn.disabled=false; btn.textContent=oldTxt;
+      $('#loginMask').classList.add('hidden'); $('#app').classList.remove('hidden');
+      loadData();
+    }
+    $('#loginBtn').addEventListener('click', doLogin);
+    $('#pwd').addEventListener('keypress', (e) => { if (e.key === 'Enter') doLogin(); });
+    if (PASSWORD) { $('#loginMask').classList.add('hidden'); $('#app').classList.remove('hidden'); }
+
+    async function loadData() {
+      try {
+        const res = await fetch('/api/relay');
+        const d = await res.json();
+        if (d && Array.isArray(d.sites)) { data = d; data.sites.forEach(s => { if (!s.id) s.id = uid(); }); }
+      } catch (e) { toast('加载失败：' + e.message, false); }
+      render();
+    }
+    if (PASSWORD) loadData();
+
+    // 探测并添加
+    $('#probeBtn').addEventListener('click', async () => {
+      const rawInput = $('#siteInput').value.trim();
+      const url = extractUrl(rawInput);
+      if (!url) { toast('请先粘贴地址', false); return; }
+      const msg = $('#probeMsg');
+      msg.textContent = '正在探测…'; msg.className = 'text-sm mt-2 text-slate-500'; msg.classList.remove('hidden');
+      try {
+        const res = await fetch('/api/relay-probe?url=' + encodeURIComponent(url));
+        const d = await res.json();
+        const ri = d.registerInfo || {};
+        // logo：优先探测结果，其次用站点域名兜底取 favicon
+        let logo = ri.logo || '';
+        if (logo && !/^https?:\/\//i.test(logo)) {
+          // 相对路径 logo，补全为绝对地址
+          try { logo = new URL(logo, d.base || url).href; } catch (_) {}
+        }
+        if (!logo) {
+          logo = '/api/favicon?url=' + encodeURIComponent(d.base || url);
+        }
+        // 即使价格探测失败，也能拿到注册信息用于添加
+        // 用户粘贴的若是邀请/注册链接（带 /i/、/register、aff、code、invite 等特征），
+        // 直接作为「二、链接」的带邀请码 URL 填入；站点主页用探测出的 base。
+        const looksLikeInvite = /\/(i|invite|reg|register|signup)\b|[?&](aff|code|invite|inviter|ref|r)=/i.test(url);
+        const site = {
+          id: uid(),
+          name: d.siteName || (d.base || url),  // 一、站点（无站名时用主页域名而非整条邀请链接）
+          url: d.base || url,            // 站点主页地址（探测用）
+          registerUrl: looksLikeInvite ? url : '',  // 二、链接（带邀请码，自动填入用户粘贴的邀请链接）
+          registerMethod: '',            // 三、注册方式（手动填/探测预填）
+          strategy: '',                  // 四、白嫖策略
+          intro: '',                     // 五、白嫖须知/介绍
+          logo: logo,
+          _probe: ri,                    // 探测到的原始信息（用于预填提示）
+        };
+        // 用探测信息预填「注册方式」
+        const methods = [];
+        if (ri.registerEnabled) methods.push('邮箱注册');
+        const oa = [];
+        if (ri.githubOAuth) oa.push('GitHub');
+        if (ri.linuxdoOAuth) oa.push('LinuxDo');
+        if (ri.telegramOAuth) oa.push('Telegram');
+        if (ri.wechatLogin) oa.push('微信');
+        if (oa.length) methods.push(oa.join('/') + ' 登录');
+        if (ri.turnstile === false) methods.push('无人机验证');
+        if (ri.checkin) methods.push('支持每日签到');
+        site.registerMethod = methods.join('，');
+
+        data.sites.push(site);
+        $('#siteInput').value = '';
+        const filledNote = site.registerUrl ? '，邀请链接已填入' : '';
+        if (d.error) {
+          msg.textContent = '⚠️ 价格未探测到（' + d.error + '），已按可得信息添加' + filledNote + '，请补充其余项';
+          msg.className = 'text-sm mt-2 text-amber-600';
+        } else {
+          msg.textContent = '✅ 已添加：' + site.name + '（注册方式已预填' + filledNote + '）';
+          msg.className = 'text-sm mt-2 text-emerald-600';
+        }
+        render();
+      } catch (e) {
+        msg.textContent = '❌ 请求失败：' + e.message; msg.className = 'text-sm mt-2 text-red-500';
+      }
+    });
+
+    // 手动添加一张空白卡
+    $('#addBlankBtn').addEventListener('click', () => {
+      data.sites.push({ id: uid(), name: '', url: '', registerUrl: '', registerMethod: '', strategy: '', intro: '', logo: '' });
+      render();
+    });
+
+    function render() {
+      const wrap = $('#sites'); wrap.innerHTML = '';
+      $('#emptyHint').classList.toggle('hidden', data.sites.length > 0);
+      data.sites.forEach((s) => {
+        const el = document.createElement('div');
+        el.className = 'bg-white rounded-xl shadow p-4 border-2 border-transparent';
+        el.draggable = true; el.dataset.id = s.id;
+        el.innerHTML = `
+          <div class="flex items-start gap-3">
+            <span class="cursor-move text-slate-300 pt-2">⠿</span>
+            <div class="flex-1 min-w-0 space-y-2">
+              <div class="grid md:grid-cols-2 gap-2">
+                <label class="block">
+                  <span class="text-xs text-slate-500">一、站点（名称）</span>
+                  <input class="f-name w-full text-sm px-2 py-1.5 bg-slate-50 border border-slate-200 rounded font-semibold" placeholder="如：OAI Codes" value="${esc(s.name)}" />
+                </label>
+                <label class="block">
+                  <span class="text-xs text-slate-500">站点主页地址（用于探测价格）</span>
+                  <input class="f-url w-full text-sm px-2 py-1.5 bg-slate-50 border border-slate-200 rounded" placeholder="https://oai.codes/" value="${esc(s.url||'')}" />
+                </label>
+              </div>
+              <label class="block">
+                <span class="text-xs text-slate-500">二、链接（带邀请码的注册链接，粘贴后自动清理干扰文字）</span>
+                <input class="f-regurl w-full text-sm px-2 py-1.5 bg-slate-50 border border-slate-200 rounded" placeholder="https://oai.codes/register?aff=你的邀请码" value="${esc(s.registerUrl||'')}" />
+              </label>
+              <label class="block">
+                <span class="text-xs text-slate-500">三、注册方式</span>
+                <input class="f-method w-full text-sm px-2 py-1.5 bg-slate-50 border border-slate-200 rounded" placeholder="如：邮箱注册，GitHub 登录，无人机验证" value="${esc(s.registerMethod||'')}" />
+              </label>
+              <label class="block">
+                <span class="text-xs text-slate-500">四、白嫖策略</span>
+                <input class="f-strategy w-full text-sm px-2 py-1.5 bg-slate-50 border border-slate-200 rounded" placeholder="如：注册送 $5，邀请每人再送 $2，每日签到送 $0.5" value="${esc(s.strategy||'')}" />
+              </label>
+              <label class="block">
+                <span class="text-xs text-slate-500">五、白嫖须知 / 介绍</span>
+                <textarea class="f-intro w-full text-sm px-2 py-1.5 bg-slate-50 border border-slate-200 rounded" rows="2" placeholder="如：额度永久有效；支持 Claude/GPT；建议用一次性邮箱注册多号；低速分组免费但慢…">${esc(s.intro||'')}</textarea>
+              </label>
+            </div>
+            <div class="flex flex-col gap-1 whitespace-nowrap">
+              <a href="/relay-probe?url=${encodeURIComponent(s.url||'')}" target="_blank" class="text-xs text-slate-600 underline hover:text-slate-900">看价格</a>
+              <button class="del text-xs text-red-500 hover:underline">删除</button>
+            </div>
+          </div>`;
+        el.querySelector('.f-name').addEventListener('input', (e)=>{s.name=e.target.value;});
+        el.querySelector('.f-url').addEventListener('input', (e)=>{s.url=e.target.value;});
+        const regEl = el.querySelector('.f-regurl');
+        regEl.addEventListener('input', (e)=>{s.registerUrl=e.target.value;});
+        // 粘贴时自动从干扰文字中提取纯链接
+        regEl.addEventListener('paste', (e)=>{
+          const txt = (e.clipboardData||window.clipboardData).getData('text');
+          if (txt && /\s/.test(txt.trim())) {  // 含空格/换行说明夹带了文字
+            const clean = extractUrl(txt);
+            if (clean && clean !== txt.trim()) {
+              e.preventDefault();
+              regEl.value = clean; s.registerUrl = clean;
+              toast('已自动清理干扰文字，仅保留链接');
+            }
+          }
+        });
+        el.querySelector('.f-method').addEventListener('input', (e)=>{s.registerMethod=e.target.value;});
+        el.querySelector('.f-strategy').addEventListener('input', (e)=>{s.strategy=e.target.value;});
+        el.querySelector('.f-intro').addEventListener('input', (e)=>{s.intro=e.target.value;});
+        el.querySelector('.del').addEventListener('click', ()=>{ if(confirm('删除「'+(s.name||'该站')+'」？')){ data.sites=data.sites.filter(x=>x.id!==s.id); render(); } });
+
+        el.addEventListener('dragstart', (e)=>{ e.dataTransfer.setData('id', s.id); el.classList.add('dragging'); });
+        el.addEventListener('dragend', ()=>el.classList.remove('dragging'));
+        el.addEventListener('dragover', (e)=>{ e.preventDefault(); el.classList.add('drag-over'); });
+        el.addEventListener('dragleave', ()=>el.classList.remove('drag-over'));
+        el.addEventListener('drop', (e)=>{ e.preventDefault(); el.classList.remove('drag-over');
+          const fromId=e.dataTransfer.getData('id');
+          const fi=data.sites.findIndex(x=>x.id===fromId), ti=data.sites.findIndex(x=>x.id===s.id);
+          if(fi>-1&&ti>-1){ const [it]=data.sites.splice(fi,1); data.sites.splice(ti,0,it); render(); }
+        });
+        wrap.appendChild(el);
+      });
+    }
+
+    $('#saveBtn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/relay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
+          body: JSON.stringify(data),
+        });
+        const d = await res.json();
+        if (res.ok && d.ok) toast('✅ 保存成功，前台已同步');
+        else if (res.status === 401) { toast('密码错误，请重新登录', false); sessionStorage.removeItem('nav_pwd'); setTimeout(()=>location.reload(),1500); }
+        else toast('保存失败：' + (d.error || '未知错误'), false);
+      } catch (e) { toast('保存失败：' + e.message, false); }
+    });
+  </script>
+</body>
+</html>

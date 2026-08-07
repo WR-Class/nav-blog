@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+
+@plugin '@tailwindcss/typography';
+
+@theme {
+  --font-sans:
+    MiSans, Inter Variable, Inter, ui-sans-serif,
+    system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/*
+ * 字体策略：中文界面优先 MiSans；英文正文仍使用清晰的 Inter。
+ * Blenda Script 只用于英文大标题/装饰标题，避免长正文难以阅读。
+ * 若以后把合法取得的字体文件放入 public/fonts/，只需取消下面对应的
+ * @font-face 注释即可；没有字体文件时会自动使用安全回退字体。
+ */
+/* @font-face {
+  font-family: 'MiSans';
+  src: url('/fonts/MiSans-Regular.woff2') format('woff2');
+  font-display: swap;
+} */
+/* @font-face {
+  font-family: 'Blenda Script';
+  src: url('/fonts/BlendaScript.woff2') format('woff2');
+  font-display: swap;
+} */
+
+@layer base {
+  body {
+    font-family: MiSans, Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+  html[data-lang='en'] h1,
+  html[data-lang='en'] h2 {
+    font-family: 'Blenda Script', 'Bricolage Grotesque Variable', cursive;
+    letter-spacing: .01em;
+  }
+  html[data-lang='en'] h3,
+  html[data-lang='en'] button,
+  html[data-lang='en'] input,
+  html[data-lang='en'] select,
+  html[data-lang='en'] textarea {
+    font-family: Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+/*
+  The default border color has changed to `currentColor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+}

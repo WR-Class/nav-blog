@@ -1,0 +1,2 @@
+# 博客详情页：/blog/:slug 统一由 /blog/post 静态页面承载，客户端读取 slug 后 fetch API
+/blog/:slug  /blog/post 200

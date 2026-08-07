@@ -1,0 +1,310 @@
+---
+import Container from "@/components/container.astro";
+import Layout from "@/layouts/Layout.astro";
+
+// 是否显示广告位（AdSense 审核通过后把 ADSENSE_CLIENT 换成你的 ca-pub-xxxx 即可）
+const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
+---
+
+<Layout title="导航博客">
+  <Container wide>
+    <!-- 时钟和问候语 -->
+    <div class="text-center mb-8 mt-8">
+      <h1 id="clock" class="text-5xl font-bold mb-2 text-slate-800 dark:text-slate-100">00:00:00</h1>
+      <p id="greeting" class="text-slate-500 dark:text-slate-400">正在加载问候语...</p>
+      <p id="tzinfo" class="text-xs text-slate-400 dark:text-slate-500 mt-1"></p>
+    </div>
+
+    <!-- 搜索框 -->
+    <div class="max-w-2xl mx-auto mb-12">
+      <form id="searchForm" class="flex items-stretch gap-2">
+        <div class="relative flex-shrink-0">
+          <select id="searchEngine"
+            class="h-full appearance-none bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-4 pr-8 text-sm font-medium text-slate-600 dark:text-slate-300 focus:border-indigo-500 outline-none cursor-pointer">
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="baidu">百度</option>
+            <option value="duckduckgo">DuckDuckGo</option>
+            <option value="github">GitHub</option>
+          </select>
+          <span class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">▾</span>
+        </div>
+        <input id="searchInput" type="text" autocomplete="off"
+          class="flex-1 min-w-0 px-4 py-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:border-indigo-500 outline-none"
+          data-i18n-ph="搜索，或输入网址…|Search, or enter a URL…"
+          placeholder="搜索，或输入网址…" />
+        <button type="submit"
+          class="flex-shrink-0 px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path>
+          </svg>
+        </button>
+      </form>
+    </div>
+
+    <!-- 导航链接网格（客户端从 /api/nav 动态加载） -->
+    <div id="navGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+      <p class="col-span-full text-center text-slate-400 py-8">正在加载导航…</p>
+    </div>
+
+    <!-- 广告位（AdSense 审核通过后自动显示） -->
+    {ADSENSE_CLIENT && (
+      <div class="my-8 flex justify-center">
+        <ins class="adsbygoogle"
+          style="display:block;width:100%"
+          data-ad-client={ADSENSE_CLIENT}
+          data-ad-format="auto"
+          data-full-width-responsive="true"></ins>
+      </div>
+    )}
+
+    <!-- GitHub 专区已独立成单独页面 /github，此处不再展示 -->
+
+  </Container>
+
+  {ADSENSE_CLIENT && (
+    <script async src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`} crossorigin="anonymous"></script>
+    <script is:inline>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+  )}
+
+  <script>
+    // 时钟和问候语
+    function detectLang() {
+      const langs = (navigator.languages && navigator.languages.length)
+        ? navigator.languages : [navigator.language || ''];
+      for (let i = 0; i < langs.length; i++) {
+        if (/^zh\b/i.test(langs[i])) return 'zh';
+      }
+      return 'en';
+    }
+    function currentLang() {
+      const saved = localStorage.getItem('site_lang');
+      if (saved === 'zh' || saved === 'en') return saved;
+      return detectLang();
+    }
+
+    // ---------- 动态翻译（用户填写的中文 → 英文） ----------
+    // 内存 + localStorage 双层缓存，避免重复请求
+    const trMemCache = {};
+    function trCacheKey(text) { return 'tr:en:' + text; }
+
+    // 批量翻译一组文本到英文，返回 { 原文: 译文 } 映射
+    async function translateBatch(texts) {
+      const uniq = [...new Set(texts.filter((t) => t && typeof t === 'string'))];
+      const need = [];
+      const result = {};
+      for (const t of uniq) {
+        if (trMemCache[t] !== undefined) { result[t] = trMemCache[t]; continue; }
+        const ls = localStorage.getItem(trCacheKey(t));
+        if (ls !== null) { trMemCache[t] = ls; result[t] = ls; continue; }
+        need.push(t);
+      }
+      if (need.length > 0) {
+        try {
+          const res = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texts: need, to: 'en' }),
+          });
+          const d = await res.json();
+          const trans = (d && d.translations) || [];
+          need.forEach((t, i) => {
+            const out = trans[i] || t;
+            trMemCache[t] = out;
+            try { localStorage.setItem(trCacheKey(t), out); } catch (e) {}
+            result[t] = out;
+          });
+        } catch (e) {
+          need.forEach((t) => { result[t] = t; }); // 失败回退原文
+        }
+      }
+      return result;
+    }
+
+    // 把一份导航数据整体翻译成英文（分类名 + 链接标题），URL/图标不动
+    async function translateNav(categories) {
+      const texts = [];
+      categories.forEach((c) => {
+        texts.push(c.name);
+        (c.links || []).forEach((l) => texts.push(l.title));
+      });
+      const m = await translateBatch(texts);
+      return categories.map((c) => ({
+        ...c,
+        name: m[c.name] || c.name,
+        links: (c.links || []).map((l) => ({ ...l, title: m[l.title] || l.title })),
+      }));
+    }
+    function updateClock() {
+      const now = new Date();
+      // new Date() 天然使用访客设备所在时区：美国访客看到美国时间，
+      // 日本访客看到日本时间，无需任何服务端处理。
+      const hours = now.getHours().toString().padStart(2, '0');
+      const minutes = now.getMinutes().toString().padStart(2, '0');
+      const seconds = now.getSeconds().toString().padStart(2, '0');
+      const clockEl = document.getElementById('clock');
+      if (clockEl) clockEl.textContent = `${hours}:${minutes}:${seconds}`;
+
+      const en = currentLang() === 'en';
+
+      // 显示访客本地时区名称与日期，让「按所在地显示」一目了然
+      const tzEl = document.getElementById('tzinfo');
+      if (tzEl) {
+        let tz = '';
+        try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+        const dateStr = now.toLocaleDateString(en ? 'en-US' : 'zh-CN', {
+          year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+        });
+        tzEl.textContent = tz ? `${dateStr} · ${tz}` : dateStr;
+      }
+
+      const hour = now.getHours();
+      let greeting = '';
+      if (hour < 6) greeting = en ? '🌙 Late night — get some rest' : '🌙 夜深了，注意休息';
+      else if (hour < 12) greeting = en ? '☀️ Good morning — a new day begins' : '☀️ 早上好，新的一天开始了';
+      else if (hour < 14) greeting = en ? '🌤️ Good noon — time for lunch' : '🌤️ 中午好，该吃午饭了';
+      else if (hour < 18) greeting = en ? '🌆 Good afternoon — keep it up' : '🌆 下午好，继续加油';
+      else if (hour < 22) greeting = en ? '🌙 Good evening — well done today' : '🌙 晚上好，辛苦了一天';
+      else greeting = en ? '🌃 It’s late — rest early' : '🌃 夜深了，早点休息';
+      const gEl = document.getElementById('greeting');
+      if (gEl) gEl.textContent = greeting;
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+    // 语言切换时立即刷新问候语
+    window.addEventListener('langchange', updateClock);
+
+    // ---------- 搜索框 ----------
+    (function initSearch() {
+      const form = document.getElementById('searchForm');
+      const input = document.getElementById('searchInput');
+      const engineSel = document.getElementById('searchEngine');
+      if (!form || !input || !engineSel) return;
+
+      const ENGINES = {
+        google: 'https://www.google.com/search?q=',
+        bing: 'https://www.bing.com/search?q=',
+        baidu: 'https://www.baidu.com/s?wd=',
+        duckduckgo: 'https://duckduckgo.com/?q=',
+        github: 'https://github.com/search?q=',
+      };
+
+      // 记住上次选择的搜索引擎
+      const savedEngine = localStorage.getItem('search_engine');
+      if (savedEngine && ENGINES[savedEngine]) engineSel.value = savedEngine;
+      engineSel.addEventListener('change', () => {
+        localStorage.setItem('search_engine', engineSel.value);
+      });
+
+      // 占位符随语言切换
+      function applyPlaceholder() {
+        const raw = input.getAttribute('data-i18n-ph') || '';
+        const parts = raw.split('|');
+        if (parts.length === 2) {
+          input.placeholder = currentLang() === 'en' ? parts[1] : parts[0];
+        }
+      }
+      applyPlaceholder();
+      window.addEventListener('langchange', applyPlaceholder);
+
+      // 判断是否是网址：含协议、或形如 domain.tld（可带路径）
+      function looksLikeUrl(q) {
+        if (/^https?:\/\//i.test(q)) return true;
+        if (/\s/.test(q)) return false; // 有空格肯定是搜索词
+        return /^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(q);
+      }
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const q = input.value.trim();
+        if (!q) return;
+        let dest;
+        if (looksLikeUrl(q)) {
+          dest = /^https?:\/\//i.test(q) ? q : 'https://' + q;
+        } else {
+          dest = (ENGINES[engineSel.value] || ENGINES.google) + encodeURIComponent(q);
+        }
+        window.open(dest, '_blank', 'noopener');
+      });
+    })();
+
+
+    // 动态加载导航数据
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderNav(categories) {
+      const grid = document.getElementById('navGrid');
+      const en = currentLang() === 'en';
+      if (!categories || categories.length === 0) {
+        grid.innerHTML = '<p class="col-span-full text-center text-slate-400 py-8">' +
+          (en ? 'No links yet' : '还没有导航链接') + '</p>';
+        return;
+      }
+      grid.innerHTML = categories.map((cat) => {
+        const links = (cat.links || []).map((link) => {
+          const iconHtml = link.icon
+            ? `<img src="${escapeHtml(link.icon)}" class="w-5 h-5 rounded object-contain flex-shrink-0" onerror="this.style.display='none'" />`
+            : `<span class="w-5 h-5 flex items-center justify-center text-slate-400 flex-shrink-0">🔗</span>`;
+          return `
+            <a href="/api/go?id=${encodeURIComponent(link.id || '')}" target="_blank" rel="noopener noreferrer"
+               title="${escapeHtml(link.title)}"
+               class="flex items-center justify-center gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors group">
+              ${iconHtml}
+              <span class="text-sm font-medium text-center text-slate-600 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 leading-tight">${escapeHtml(link.title)}</span>
+            </a>`;
+        }).join('');
+        return `
+          <div class="nav-category-card rounded-2xl p-6 shadow-lg hover:shadow-xl transition-shadow" style="background:${document.documentElement.classList.contains('dark') ? 'rgba(30,41,59,var(--card-bg-opacity,1))' : 'rgba(255,255,255,var(--card-bg-opacity,1))'};">
+            <h3 class="text-lg font-semibold mb-4 text-center text-slate-800 dark:text-slate-100">${escapeHtml(cat.name)}</h3>
+            <div class="grid grid-cols-2 gap-3">${links}</div>
+          </div>`;
+      }).join('');
+    }
+
+    let navCache = null;
+    let cardBgOpacity = 1.0; // 分类卡片背景不透明度（从 /api/settings 读取）
+
+    // 提前读取站点设置（卡片透明度等），与 Layout.astro 中的背景逻辑同步
+    try {
+      const cached = localStorage.getItem('site_settings');
+      if (cached) {
+        const s = JSON.parse(cached);
+        cardBgOpacity = typeof s.cardBgOpacity === 'number' ? s.cardBgOpacity : 1.0;
+      }
+    } catch (e) {}
+    // 同时拉取最新值（异步，不阻塞渲染）
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(s => {
+        if (s && typeof s.cardBgOpacity === 'number') {
+          cardBgOpacity = s.cardBgOpacity;
+        }
+      })
+      .catch(() => {});
+
+    async function loadAndRenderNav() {
+      const en = currentLang() === 'en';
+      if (en && navCache) {
+        renderNav(await translateNav(navCache));
+      } else {
+        renderNav(navCache);
+      }
+    }
+
+    fetch('/api/nav')
+      .then((r) => r.json())
+      .then(async (d) => {
+        navCache = d.categories;
+        await loadAndRenderNav();
+      })
+      .catch(() => {
+        document.getElementById('navGrid').innerHTML =
+          '<p class="col-span-full text-center text-red-400 py-8">' +
+          (currentLang() === 'en' ? 'Failed to load' : '导航加载失败') + '</p>';
+      });
+    // 语言切换时重渲染（英文则动态翻译，中文用原文）
+    window.addEventListener('langchange', () => { if (navCache) loadAndRenderNav(); });
+  </script>
+</Layout>

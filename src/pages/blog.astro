@@ -1,0 +1,98 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+import Sectionhead from "@/components/sectionhead.astro";
+---
+
+<Layout title="Blog">
+  <Container>
+    <Sectionhead>
+      <Fragment slot="title"><span data-i18n="吾荣小屋 · 博客|Wurong's Nook · Blog">吾荣小屋 · 博客</span></Fragment>
+      <Fragment slot="desc">
+        <span data-i18n="记录技术折腾、建站笔记与生活碎碎念。|Technical experiments, website-building notes, and everyday thoughts.">记录技术折腾、建站笔记与生活碎碎念。</span>
+      </Fragment>
+    </Sectionhead>
+    <main class="mt-16">
+      <div id="loading" class="text-center text-slate-400 py-20" data-i18n="正在加载…|Loading…">正在加载…</div>
+      <ul id="blogList" class="grid gap-16 max-w-4xl mx-auto"></ul>
+      <p id="blogEmpty" class="text-center text-slate-400 py-20 hidden" data-i18n="还没有文章|No posts yet">还没有文章</p>
+    </main>
+  </Container>
+</Layout>
+
+<script>
+  function detectLang() {
+    const langs = (navigator.languages && navigator.languages.length)
+      ? navigator.languages : [navigator.language || ''];
+    for (let i = 0; i < langs.length; i++) { if (/^zh\b/i.test(langs[i])) return 'zh'; }
+    return 'en';
+  }
+  function currentLang() {
+    const saved = localStorage.getItem('site_lang');
+    return (saved === 'zh' || saved === 'en') ? saved : detectLang();
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  let postsCache = null;
+
+  function render(posts) {
+    const en = currentLang() === 'en';
+    const list = document.getElementById('blogList');
+    const empty = document.getElementById('blogEmpty');
+    document.getElementById('loading').classList.add('hidden');
+    if (!posts || posts.length === 0) {
+      list.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    list.innerHTML = posts.map((p, index) => {
+      const title = en ? (p.titleEn || p.title) : p.title;
+      const snippet = en ? (p.snippetEn || p.snippet) : p.snippet;
+      const imgSrc = p.image && p.image.src ? p.image.src : '';
+      const imgAlt = p.image && p.image.alt ? p.image.alt : '';
+      const imgHtml = imgSrc
+        ? `<img src="${esc(imgSrc)}" alt="${esc(imgAlt)}" loading="${index <= 2 ? 'eager' : 'lazy'}" decoding="${index <= 2 ? 'sync' : 'async'}" class="w-full rounded-md object-cover object-center bg-white aspect-[4/3]" onerror="this.style.display='none'" />`
+        : `<div class="w-full aspect-[4/3] rounded-md bg-gray-100 flex items-center justify-center text-gray-400 text-sm">No Image</div>`;
+      const dateStr = p.publishDate
+        ? new Date(p.publishDate + 'T00:00:00').toLocaleDateString(en ? 'en-US' : 'zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
+        : '';
+      return `
+        <li>
+          <a href="/blog/${encodeURIComponent(p.slug)}">
+            <div class="grid md:grid-cols-2 gap-5 md:gap-10 items-center">
+              ${imgHtml}
+              <div>
+                <span class="text-blue-400 uppercase tracking-wider text-sm font-medium">${esc(p.category)}</span>
+                <h2 class="text-3xl font-semibold leading-snug tracking-tight mt-1">${esc(title)}</h2>
+                ${snippet ? `<p class="text-slate-500 mt-2 line-clamp-2">${esc(snippet)}</p>` : ''}
+                <div class="flex gap-2 mt-3">
+                  <span class="text-gray-400">${esc(p.author)}</span>
+                  <span class="text-gray-400">•</span>
+                  <time class="text-gray-400">${dateStr}</time>
+                </div>
+              </div>
+            </div>
+          </a>
+        </li>`;
+    }).join('');
+  }
+
+  async function loadAndRender() {
+    if (postsCache) { render(postsCache); return; }
+    try {
+      const res = await fetch('/api/blog');
+      const d = await res.json();
+      postsCache = d.posts || [];
+      render(postsCache);
+    } catch {
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('blogEmpty').classList.remove('hidden');
+    }
+  }
+
+  loadAndRender();
+  window.addEventListener('langchange', () => { if (postsCache) render(postsCache); });
+</script>

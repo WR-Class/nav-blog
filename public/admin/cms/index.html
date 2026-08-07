@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>内容管理 | 吾荣小屋</title>
+  <link rel="preconnect" href="https://unpkg.com" />
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    /* 悬浮返回导航后台按钮 */
+    #backToNav {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 99999;
+      background: #6366f1;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 14px;
+      text-decoration: none;
+      box-shadow: 0 4px 14px rgba(99,102,241,0.4);
+      transition: transform .15s, background .15s;
+    }
+    #backToNav:hover { background: #4f46e5; transform: translateY(-2px); }
+  </style>
+</head>
+<body>
+  <script>
+    // 简单登录保护：未登录则跳回登录页
+    if (localStorage.getItem('admin_logged_in') !== 'true') {
+      window.location.href = '/admin/';
+    }
+  </script>
+
+  <!-- 悬浮按钮：返回统一管理面板 -->
+  <a id="backToNav" href="/manage/#blog">⚙️ 管理面板</a>
+
+  <!-- 显式指定配置文件路径，避免相对路径解析到 /admin/cms/config.yml -->
+  <link href="/admin/config.yml" type="text/yaml" rel="cms-config-url" />
+  <script src="https://cdn.jsdelivr.net/npm/decap-cms@3.3.3/dist/decap-cms.js"></script>
+</body>
+</html>
