@@ -1,3 +1,2 @@
-# 博客详情页：旧路径 /blog/:slug 重定向到 /blog/post?slug=:slug
-# 静态文件（/blog/ 列表页、/blog/post 详情页）优先于重定向规则，不受影响
-/blog/:slug  /blog/post?slug=:slug 301
+# _redirects 已清空
+# 博客详情页链接直接使用 /blog/post?slug=xxx 格式，不再需要重定向规则
