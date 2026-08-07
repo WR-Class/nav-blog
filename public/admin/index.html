@@ -120,7 +120,7 @@
     // 检查是否已登录
     if (localStorage.getItem('admin_logged_in') === 'true' || sessionStorage.getItem('nav_pwd')) {
       localStorage.setItem('admin_logged_in', 'true');
-      window.location.href = '/blog-editor/';
+      window.location.href = '/manage/';
     }
 
     const form = document.getElementById('loginForm');
@@ -145,7 +145,7 @@
         if (res.ok) {
           localStorage.setItem('admin_logged_in', 'true');
           try { sessionStorage.setItem('nav_pwd', password); } catch (e) {}
-          window.location.href = '/blog-editor/';
+          window.location.href = '/manage/';
           return;
         }
         errorMsg.textContent = '密码错误，请重试';
