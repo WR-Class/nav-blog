@@ -103,16 +103,29 @@ import Container from "@/components/container.astro";
 
       // 英文内容
       const hasEn = post.bodyEn && post.bodyEn.trim();
-      document.getElementById('category-en').textContent = post.category || '';
+      const categoryEn = { '工具调用': 'Tools', '技术折腾': 'Tech', '建站笔记': 'Web Notes', '生活碎碎念': 'Life', '未分类': 'Uncategorized' };
+      document.getElementById('category-en').textContent = categoryEn[post.category] || post.category || '';
       document.getElementById('title-en').textContent = post.titleEn || post.title || '';
       document.getElementById('author-en').textContent = post.author || '';
       document.getElementById('date-en').textContent = formatDate(post.publishDate, 'en');
       document.getElementById('tags-en').innerHTML = (post.tags || []).map(t => '<span class="text-sm text-gray-500">#' + esc(t) + '</span>').join('');
-      document.getElementById('body-en').innerHTML = hasEn
-        ? (window.marked ? window.marked.parse(post.bodyEn) : '<pre>' + esc(post.bodyEn) + '</pre>')
-        : '<p class="text-slate-400">English translation not available yet.</p>';
 
-      // 如果没有英文版，隐藏语言切换（只显示中文）
+      // 根据翻译状态显示不同内容
+      const trStatus = post.translationStatus || (hasEn ? 'complete' : 'none');
+      let enBodyHtml = '';
+      if (trStatus === 'pending') {
+        enBodyHtml = '<p class="text-slate-400">English translation is in progress, please check back later.</p>';
+      } else if (hasEn) {
+        enBodyHtml = window.marked ? window.marked.parse(post.bodyEn) : '<pre>' + esc(post.bodyEn) + '</pre>';
+        if (trStatus === 'partial') {
+          enBodyHtml = '<div class="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-4 py-2 mb-4">⚠️ Translation is partially complete. Some sections may still be in Chinese.</div>' + enBodyHtml;
+        }
+      } else {
+        enBodyHtml = '<p class="text-slate-400">English translation not available yet.</p>';
+      }
+      document.getElementById('body-en').innerHTML = enBodyHtml;
+
+      // 如果没有英文版或正在翻译中，隐藏语言切换（只显示中文）
       if (!hasEn) {
         document.querySelector('[data-lang="en"]').style.display = 'none';
         document.querySelector('[data-lang="zh"]').style.display = '';
