@@ -59,13 +59,15 @@ import Sectionhead from "@/components/sectionhead.astro";
       const dateStr = p.publishDate
         ? new Date(p.publishDate + 'T00:00:00').toLocaleDateString(en ? 'en-US' : 'zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
         : '';
+      const categoryEn = { '工具调用': 'Tools', '技术折腾': 'Tech', '建站笔记': 'Web Notes', '生活碎碎念': 'Life', '未分类': 'Uncategorized' };
+      const category = en ? (categoryEn[p.category] || p.category) : p.category;
       return `
         <li>
-          <a href="/blog/${encodeURIComponent(p.slug)}">
+          <a href="/blog/post?slug=${encodeURIComponent(p.slug)}">
             <div class="grid md:grid-cols-2 gap-5 md:gap-10 items-center">
               ${imgHtml}
               <div>
-                <span class="text-blue-400 uppercase tracking-wider text-sm font-medium">${esc(p.category)}</span>
+                <span class="text-blue-400 uppercase tracking-wider text-sm font-medium">${esc(category)}</span>
                 <h2 class="text-3xl font-semibold leading-snug tracking-tight mt-1">${esc(title)}</h2>
                 ${snippet ? `<p class="text-slate-500 mt-2 line-clamp-2">${esc(snippet)}</p>` : ''}
                 <div class="flex gap-2 mt-3">

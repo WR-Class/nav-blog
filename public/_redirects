@@ -1,2 +1,3 @@
-# 博客详情页：/blog/:slug 统一由 /blog/post 静态页面承载，客户端读取 slug 后 fetch API
-/blog/:slug  /blog/post 200
+# 博客详情页：旧路径 /blog/:slug 重定向到 /blog/post?slug=:slug
+# 静态文件（/blog/ 列表页、/blog/post 详情页）优先于重定向规则，不受影响
+/blog/:slug  /blog/post?slug=:slug 301
