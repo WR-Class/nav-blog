@@ -116,7 +116,11 @@ const esc = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 function msg(t, ok = false) {
   $('#msg').textContent = t;
-  $('#msg').className = 'text-sm mt-3 ' + (ok ? 'text-emerald-600' : 'text-red-500');
+  if (ok === 'loading') {
+    $('#msg').className = 'text-base mt-3 text-blue-600 font-semibold animate-pulse';
+  } else {
+    $('#msg').className = 'text-sm mt-3 ' + (ok ? 'text-emerald-600' : 'text-red-500');
+  }
 }
 
 // 显示翻译状态
@@ -247,7 +251,7 @@ async function save() {
   };
   try {
     $('#saveBtn').disabled = true;
-    msg('正在保存' + (!bodyEn ? '（含自动翻译，可能需要 10-30 秒）…' : '…'));
+    msg('正在保存' + (!bodyEn ? '（含自动翻译，可能需要 10-30 秒）…' : '…'), !bodyEn ? 'loading' : false);
     const res = await fetch('/api/blog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
@@ -288,27 +292,94 @@ async function save() {
 // ---------- 重新翻译 ----------
 async function retranslate() {
   if (!current) { msg('请先选择要重新翻译的文章'); return; }
-  if (!confirm('确认重新翻译「' + current.title + '」的英文版本？\n这会覆盖现有的英文翻译。')) return;
+  if (!confirm('确认重新翻译「' + current.title + '」的英文版本？\n\n翻译过程可能需要 30-60 秒，请耐心等待。\n翻译期间请勿关闭页面。')) return;
+
+  const btn = $('#retranslateBtn');
+  const originalText = btn.innerHTML;
+  let elapsed = 0;
+  let timer = null;
+
   try {
-    $('#retranslateBtn').disabled = true;
-    msg('正在重新翻译，请耐心等待…');
+    btn.disabled = true;
+    btn.classList.add('animate-pulse');
+    btn.innerHTML = '🌐 翻译中…';
+
+    // 实时计时器：每秒更新按钮和消息
+    timer = setInterval(() => {
+      elapsed++;
+      btn.innerHTML = `🌐 翻译中… (${elapsed}s)`;
+      msg(`正在重新翻译「${current.title}」，已用时 ${elapsed} 秒，请耐心等待…`, 'loading');
+    }, 1000);
+
+    msg(`正在重新翻译「${current.title}」，请耐心等待…`, 'loading');
+
     const res = await fetch('/api/blog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
       body: JSON.stringify({ action: 'retranslate', slug: current.slug }),
     });
+    clearInterval(timer);
+
     const d = await res.json();
     if (!res.ok) throw Error(d.error || '翻译失败');
+
     const trStatus = d.translationStatus || 'complete';
-    msg('重新翻译完成！状态：' + (trStatus === 'complete' ? '完整' : '部分'), true);
+    const statusText = trStatus === 'complete' ? '✅ 翻译完整（无残留中文）'
+      : trStatus === 'partial' ? '⚠️ 翻译部分完成（仍有少量中文残留）'
+      : '❌ 翻译失败';
+    msg(`重新翻译完成！${statusText}（用时 ${elapsed} 秒）`, true);
     showTrStatus(trStatus);
     if (d.post && d.post.bodyEn) {
       $('#enEditor').value = d.post.bodyEn;
       $('#enSection').classList.remove('hidden');
     }
     await loadPosts();
-  } catch (e) { msg('重新翻译失败：' + e.message); }
-  finally { $('#retranslateBtn').disabled = false; }
+  } catch (e) {
+    if (timer) clearInterval(timer);
+    // 请求可能超时（Cloudflare 30s 限制），但翻译可能在后台完成
+    // 新代码先标记 pending 再翻译，所以博文状态已经更新
+    msg('翻译请求超时，正在检查翻译是否已完成…', 'loading');
+    await new Promise(r => setTimeout(r, 3000));
+
+    // 轮询检查翻译结果（最多再等 60 秒）
+    for (let i = 0; i < 12; i++) {
+      try {
+        const checkRes = await fetch('/api/blog?slug=' + encodeURIComponent(current.slug), {
+          headers: { 'Authorization': 'Bearer ' + PASSWORD }
+        });
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          const p = checkData.post;
+          if (p && p.translationStatus && p.translationStatus !== 'pending') {
+            // 翻译已完成（不管成功还是部分）
+            const trStatus = p.translationStatus;
+            const statusText = trStatus === 'complete' ? '✅ 翻译完整（无残留中文）'
+              : trStatus === 'partial' ? '⚠️ 翻译部分完成（仍有少量中文残留）'
+              : '❌ 翻译未完成';
+            msg(`重新翻译完成！${statusText}（用时 ${elapsed + (i + 1) * 5} 秒）`, true);
+            showTrStatus(trStatus);
+            if (p.bodyEn) {
+              $('#enEditor').value = p.bodyEn;
+              $('#enSection').classList.remove('hidden');
+            }
+            await loadPosts();
+            return;
+          }
+          // 仍在 pending，继续等待
+          msg(`翻译仍在进行中…已用时 ${elapsed + (i + 1) * 5} 秒，继续等待…`, 'loading');
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    // 超时仍未完成
+    msg('翻译超时：请求已超过 ' + (elapsed + 60) + ' 秒。翻译可能仍在后台进行，请稍后刷新文章列表查看翻译状态。');
+  }
+  finally {
+    btn.disabled = false;
+    btn.classList.remove('animate-pulse');
+    btn.innerHTML = originalText;
+  }
 }
 
 // ---------- 删除 ----------
@@ -333,7 +404,7 @@ async function previewTranslate() {
   if (!$('#title').value.trim()) { msg('请先填写标题'); return; }
   try {
     $('#translateBtn').disabled = true;
-    msg('正在生成翻译预览，请稍候…');
+    msg('正在生成翻译预览，请稍候…', 'loading');
     const res = await fetch('/api/translate-markdown?ts=' + Date.now(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
