@@ -1,53 +1,125 @@
-// Cloudflare Pages Middleware: 域名级拦截
-// 1. 统计 wurong.bot.cd 的访问量（存 KV）
-// 2. wurong.bot.cd 访问时显示"站点已转移"提示页，5 秒后自动跳转到 wurong.cc.cd
+// Cloudflare Pages Middleware
+// 功能 1: wurong.bot.cd 域名迁移提示 + 统计
+// 功能 2: 管理后台服务端鉴权（H-1 修复）—— 无有效 Cookie 拦截 admin 页面
 
 const OLD_DOMAIN = "wurong.bot.cd";
 const NEW_DOMAIN = "wurong.cc.cd";
 const STATS_KEY = "stats:domain_visits";
+const COOKIE_NAME = "admin_session";
+const COOKIE_SALT = "wurong_admin_2026";
+
+// 需要服务端鉴权的路径前缀
+const ADMIN_PATHS = [
+  "/manage",
+  "/stats-admin",
+  "/nav-admin",
+  "/github-admin",
+  "/relay-admin",
+  "/blog-editor",
+];
 
 export async function onRequest(context) {
   const { request, env, next } = context;
-
-  // 获取访问域名
   const host = request.headers.get("host") || "";
+  const url = new URL(request.url);
 
-  // 只处理 wurong.bot.cd 的请求
-  if (host !== OLD_DOMAIN) {
-    return next();
+  // ========== 功能 1: wurong.bot.cd 域名迁移 ==========
+  if (host === OLD_DOMAIN) {
+    return handleOldDomain(request, env, url);
   }
 
-  // ---------- 统计访问量（不阻塞主流程）----------
+  // ========== 功能 2: 管理后台服务端鉴权 ==========
+  const isAdminPath = ADMIN_PATHS.some((p) => url.pathname.startsWith(p));
+
+  if (isAdminPath) {
+    // 未配置密码时放行（避免锁死，但此时站点本身无法正常工作）
+    if (!env.ADMIN_PASSWORD) {
+      return next();
+    }
+
+    const cookieValid = await checkAdminCookie(request, env);
+    if (!cookieValid) {
+      // HTML 请求：重定向到登录页
+      const accept = request.headers.get("accept") || "";
+      if (accept.includes("text/html")) {
+        return Response.redirect(
+          "https://" + (host || NEW_DOMAIN) + "/admin/",
+          302
+        );
+      }
+      // 非 HTML 请求：返回 401
+      return new Response("Unauthorized", {
+        status: 401,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+  }
+
+  return next();
+}
+
+// ========== Cookie 校验 ==========
+async function checkAdminCookie(request, env) {
+  const cookieHeader = request.headers.get("cookie") || "";
+  const cookies = parseCookies(cookieHeader);
+  const sessionCookie = cookies[COOKIE_NAME];
+  if (!sessionCookie) return false;
+
+  const expectedValue = await sha256(env.ADMIN_PASSWORD + COOKIE_SALT);
+  return sessionCookie === expectedValue;
+}
+
+function parseCookies(header) {
+  const cookies = {};
+  header.split(";").forEach((pair) => {
+    const idx = pair.indexOf("=");
+    if (idx > 0) {
+      const key = pair.slice(0, idx).trim();
+      const val = pair.slice(idx + 1).trim();
+      cookies[key] = val;
+    }
+  });
+  return cookies;
+}
+
+// ========== SHA-256 ==========
+async function sha256(text) {
+  const data = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// ========== wurong.bot.cd 域名迁移处理 ==========
+async function handleOldDomain(request, env, url) {
+  // 统计访问量
   if (env.NAV_DB) {
     try {
       const raw = await env.NAV_DB.get(STATS_KEY);
       const stats = raw ? JSON.parse(raw) : {};
-      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const today = new Date().toISOString().slice(0, 10);
       if (!stats[OLD_DOMAIN]) stats[OLD_DOMAIN] = { total: 0, daily: {} };
       stats[OLD_DOMAIN].total = (stats[OLD_DOMAIN].total || 0) + 1;
       stats[OLD_DOMAIN].daily[today] = (stats[OLD_DOMAIN].daily[today] || 0) + 1;
       stats[OLD_DOMAIN].lastVisit = new Date().toISOString();
-      // fire-and-forget：不 await，避免拖慢响应
       env.NAV_DB.put(STATS_KEY, JSON.stringify(stats));
     } catch {}
   }
 
-  // ---------- 判断请求类型 ----------
   const accept = request.headers.get("accept") || "";
-  const url = new URL(request.url);
   const isHtml = accept.includes("text/html");
   const isAsset = /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|webp|avif|xml|txt|map)$/i.test(url.pathname);
   const isApi = url.pathname.startsWith("/api/");
+  const redirectUrl = "https://" + NEW_DOMAIN + url.pathname + url.search;
 
-  // API 和静态资源：直接 302 跳转，不显示提示页
+  // API 和静态资源：直接 302 跳转
   if (isApi || isAsset) {
-    const redirectUrl = "https://" + NEW_DOMAIN + url.pathname + url.search;
     return Response.redirect(redirectUrl, 302);
   }
 
-  // HTML 页面：显示"站点已转移"提示页，5 秒后自动跳转
+  // HTML 页面：显示迁移提示页
   if (isHtml) {
-    const redirectUrl = "https://" + NEW_DOMAIN + url.pathname + url.search;
     const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -97,7 +169,5 @@ export async function onRequest(context) {
     });
   }
 
-  // 其他请求：直接跳转
-  const redirectUrl = "https://" + NEW_DOMAIN + url.pathname + url.search;
   return Response.redirect(redirectUrl, 302);
 }
