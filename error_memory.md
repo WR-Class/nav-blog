@@ -1,5 +1,15 @@
 # error_memory.md — 错误记忆
 
+## 0. 安全审计修复（2026-08-08）
+
+- **H-1 管理后台无服务端鉴权**：`_middleware.js` 拦截 `/manage/*`、`/*-admin/*`、`/blog-editor/*`，无 `admin_session` Cookie 重定向到 `/admin/`。Cookie 由 `/api/verify` 登录成功后下发（HttpOnly+Secure+SameSite=Lax），值=`sha256(password+salt)`
+- **M-1 无频控**：`/api/verify` 同 IP 1 小时内失败 5 次锁定 1 小时（KV `rl:verify:<ip>` + TTL 3600s）
+- **M-2 relay 泄露 _probe**：`/api/relay` GET 响应改用白名单字段过滤，`_probe`/`quotaPerUnit`/`usdExchangeRate`/`docsLink`/`serverAddress` 不进公开响应
+- **M-3 安全头缺失**：`public/_headers` 配置 CSP/HSTS/X-Frame-Options:SAMEORIGIN/Permissions-Policy/COOP
+- **L-1 robots.txt**：sitemap 改为 `https://wurong.cc.cd/sitemap-index.xml`
+- **L-3 外链无 SRI**：CSP 已限制脚本源白名单（`cdn.tailwindcss.com`/`uicdn.toast.com`/`cdn.jsdelivr.net`），版本固定+SRI 留后续
+- **适用范围**：`functions/_middleware.js`、`functions/api/verify.js`、`functions/api/relay.js`、`public/_headers`、`public/robots.txt`
+
 ## 1. 重新翻译按钮点击无反应
 
 - **重复出现**：用户多次反馈"点击重新翻译没有任何提示"
