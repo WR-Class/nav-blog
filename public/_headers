@@ -9,3 +9,16 @@
 
 /api/*
   Cache-Control: no-store
+
+/stats-admin/*
+  Cache-Control: no-cache, must-revalidate
+/nav-admin/*
+  Cache-Control: no-cache, must-revalidate
+/github-admin/*
+  Cache-Control: no-cache, must-revalidate
+/relay-admin/*
+  Cache-Control: no-cache, must-revalidate
+/blog-editor/*
+  Cache-Control: no-cache, must-revalidate
+/manage/*
+  Cache-Control: no-cache, must-revalidate
