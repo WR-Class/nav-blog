@@ -323,13 +323,48 @@
       return labels[path] || path;
     }
 
+    // 访问来源友好名称映射
+    function refLabel(ref) {
+      if (!ref || ref === '(直接访问)') return '直接访问';
+      const r = ref.toLowerCase();
+      // App 包名（Android）
+      const apps = {
+        'org.telegram.messenger': 'Telegram',
+        'com.tencent.mm': '微信',
+        'com.tencent.mobileqq': 'QQ',
+        'com.android.chrome': 'Chrome',
+        'com.mi.globalbrowser': '小米浏览器',
+        'com.android.browser': '安卓浏览器',
+      };
+      if (apps[ref]) return apps[ref];
+      // 域名模式匹配
+      if (r === 't.me' || r.endsWith('.t.me')) return 'Telegram';
+      if (r.includes('google.')) return 'Google';
+      if (r.endsWith('bing.com')) return 'Bing';
+      if (r.includes('baidu.com')) return '百度';
+      if (r.includes('github.com')) return 'GitHub';
+      if (r.includes('twitter.com') || r.includes('x.com')) return 'Twitter/X';
+      if (r.includes('facebook.com')) return 'Facebook';
+      if (r.includes('weibo.') ) return '微博';
+      if (r.includes('zhihu.com')) return '知乎';
+      if (r.includes('duckduckgo.com')) return 'DuckDuckGo';
+      if (r.includes('linkedin.com')) return 'LinkedIn';
+      if (r.includes('reddit.com')) return 'Reddit';
+      if (r.includes('youtube.com') || r.includes('youtu.be')) return 'YouTube';
+      if (r.includes('bilibili.com')) return 'B站';
+      if (r.includes('sogou.com')) return '搜狗';
+      if (r.includes('yandex.')) return 'Yandex';
+      if (r.includes('nav-blog.pages.dev')) return 'Pages 原生域名';
+      return ref;
+    }
+
     function renderBars(sel, list, isPath) {
       const box = $(sel);
       if (!list || !list.length) { box.innerHTML = '<p class="text-slate-400 text-sm">暂无数据</p>'; return; }
       const max = Math.max(...list.map(x => x.count));
       box.innerHTML = list.map(item => {
         const w = Math.round(item.count / max * 100);
-        const label = esc(isPath ? pathLabel(item.key) : item.key);
+        const label = esc(isPath ? pathLabel(item.key) : refLabel(item.key));
         return '<div class="flex items-center gap-2">' +
           '<div class="w-40 truncate text-slate-600" title="' + label + '">' + label + '</div>' +
           '<div class="flex-1 bg-slate-100 rounded h-4 relative">' +
