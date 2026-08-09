@@ -28,6 +28,15 @@
 - **适用范围**：`public/blog-editor/index.html` 及所有包含按钮的纯 HTML 后台页面
 - **修复时间**：2026-08-08
 
+## 6. CSP 拦截 Toast UI 编辑器 CSS 导致博客编辑器无样式
+
+- **现象**：博客编辑器（`/blog-editor/`）的 Toast UI 编辑器工具栏、按钮、编辑区全部无样式，控制台报 CSP 错误
+- **根因**：`public/_headers` 中的 CSP `style-src` 指令只允许 `cdn.tailwindcss.com`，未包含 `uicdn.toast.com`，导致 `https://uicdn.toast.com/editor/latest/toastui-editor.min.css` 被浏览器拦截
+- **解法**：在 `style-src` 中添加 `uicdn.toast.com`
+- **下次避免**：新增外部 CSS 资源时，必须同步更新 `_headers` 中的 CSP `style-src` 白名单；新增外部 JS 资源时同步更新 `script-src` 白名单
+- **适用范围**：`public/_headers`，所有通过 `<link>` 或 `<script>` 引用外部 CDN 资源的页面
+- **修复时间**：2026-08-10
+
 ## 2. 博客详情页 308 重定向导致加载失败
 
 - **现象**：点击博客列表中的文章，显示"文章加载失败或不存在"
