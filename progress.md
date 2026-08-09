@@ -195,3 +195,40 @@
 1. 等 Cloudflare Pages 自动部署（推送后 1-2 分钟）
 2. 如需多 Key：在 Cloudflare Pages 环境变量中添加 `DEEPL_API_KEYS`，值如 `key1:fx,key2:fx,key3`
 3. 从 `wurong.cc.cd` 后台进入博客编辑器，点击「重新翻译」测试
+
+## 2026-08-09 渗透测试报告漏洞修复
+
+### 背景
+
+用户授权对 `wurong.cc.cd` 进行渗透测试，报告发现 3 项漏洞：SSRF（中危）、翻译 API 滥用（中危）、favicon 任意域请求（低危）。
+
+### 已完成的工作
+
+1. **M-1 `/api/relay-probe` SSRF 修复**（`functions/api/relay-probe.js`）
+   - 主机白名单：从 KV 读取 `/api/relay` 清单中的中转站域名，仅允许探测已配置的站点
+   - 强制 HTTPS：拒绝 `http://` 协议
+   - 出站超时：5 秒 AbortController，防止慢速目标占用 Worker 执行时间
+   - 响应截断：`announcements` 内容 ≤500 字符，`registerInfo` 字符串字段 ≤200 字符
+
+2. **M-2 `/api/translate` 滥用防护**（`functions/api/translate.js`）
+   - Referer 校验：仅允许 `wurong.cc.cd`、`wurong.bot.cd`、`nav-blog.pages.dev` 发起请求
+   - 批量上限：单次最多 20 条文本
+   - 长度上限：单条文本不超过 5000 字符
+   - IP 频控：每 IP 每分钟 60 次（KV 滑动窗口，TTL 120s）
+
+3. **L-3 `/api/favicon` 域名验证**（`functions/api/favicon.js`）
+   - 拒绝内网/私有 IP 和 localhost：`10.x`、`127.x`、`192.168.x`、`172.16-31.x`、`169.254.x`、`0.x`、`fe80::`、`fc/fd` 前缀 IPv6
+
+4. **中间件频控**（`functions/_middleware.js`）
+   - `/api/relay-probe`：每 IP 每分钟 30 次（KV 滑动窗口），防止端口扫描和 Worker 时间 DoS
+
+### 构建测试
+
+- `npm run build` 通过，9 页面构建成功
+- 已推送到 GitHub（commit `d0dc1a1`）
+
+### 用户需要操作
+
+1. 等 Cloudflare Pages 自动部署（推送后 1-2 分钟）
+2. 从 `wurong.cc.cd` 测试翻译功能正常工作（Referer 校验不影响站内调用）
+3. 从 `wurong.cc.cd` 后台进入中转站管理，测试 relay-probe 探测功能正常工作（仅能探测已配置的站点）

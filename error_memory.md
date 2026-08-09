@@ -10,6 +10,15 @@
 - **L-3 外链无 SRI**：CSP 已限制脚本源白名单（`cdn.tailwindcss.com`/`uicdn.toast.com`/`cdn.jsdelivr.net`），版本固定+SRI 留后续
 - **适用范围**：`functions/_middleware.js`、`functions/api/verify.js`、`functions/api/relay.js`、`public/_headers`、`public/robots.txt`
 
+## 0b. 渗透测试报告漏洞修复（2026-08-09）
+
+- **M-1 `/api/relay-probe` SSRF**：该端点接受任意公网 URL 并发起出站请求，可被用于端口扫描和公网内容盲读。修复：主机白名单（仅允许 `/api/relay` KV 清单中的域名）、强制 HTTPS、5 秒超时（AbortController）、响应字段截断
+- **M-2 `/api/translate` 无限制代理滥用**：该端点无鉴权/频控/大小限制，攻击者可耗尽 DeepL 配额。修复：Referer 校验（仅自有域名）、批量上限 20 条、单条 ≤5000 字符、IP 频控 60 次/分钟
+- **L-3 `/api/favicon` 任意域请求**：接受任意域名参数（虽仅查询 Google/DDG 图标服务，风险低）。修复：拒绝内网/私有 IP 和 localhost
+- **中间件频控**：`_middleware.js` 对 `/api/relay-probe` 加 IP 频控 30 次/分钟
+- **适用范围**：`functions/api/relay-probe.js`、`functions/api/translate.js`、`functions/api/favicon.js`、`functions/_middleware.js`
+- **注意事项**：`/api/translate` 的 Referer 校验要求前端调用时必须携带 Referer 头。若未来新增调用翻译 API 的页面，需确保该页面的 URL 在 `allowedOrigins` 白名单中
+
 ## 1. 重新翻译按钮点击无反应
 
 - **重复出现**：用户多次反馈"点击重新翻译没有任何提示"
