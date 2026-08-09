@@ -1,6 +1,7 @@
 // Cloudflare Pages Middleware
 // 功能 1: wurong.bot.cd 域名迁移提示 + 统计
 // 功能 2: 管理后台服务端鉴权（H-1 修复）—— 无有效 Cookie 拦截 admin 页面
+// 功能 3: 敏感 API 端点频控 —— /api/relay-probe 每分钟 30 次/IP（SSRF 防护）
 
 const OLD_DOMAIN = "wurong.bot.cd";
 const NEW_DOMAIN = "wurong.cc.cd";
@@ -53,6 +54,32 @@ export async function onRequest(context) {
         headers: { "Content-Type": "text/plain" },
       });
     }
+  }
+
+  // ========== 功能 3: 敏感 API 端点频控 ==========
+  // /api/translate 已在函数内部实现频控，此处仅对 /api/relay-probe 做频控
+  // relay-probe 每分钟 30 次/IP，防止端口扫描和 Worker 时间 DoS
+  if (url.pathname === "/api/relay-probe" && env.NAV_DB) {
+    const clientIP = request.headers.get("cf-connecting-ip") || "unknown";
+    const rateLimitKey = `rl:relay-probe:${clientIP}`;
+    const now = Date.now();
+    const windowMs = 60 * 1000;
+    const maxRequests = 30;
+    try {
+      const raw = await env.NAV_DB.get(rateLimitKey);
+      const entries = raw ? JSON.parse(raw) : [];
+      const recent = entries.filter((t) => now - t < windowMs);
+      if (recent.length >= maxRequests) {
+        return new Response(JSON.stringify({ error: "请求过于频繁，请稍后再试" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        });
+      }
+      recent.push(now);
+      await env.NAV_DB.put(rateLimitKey, JSON.stringify(recent.slice(-maxRequests * 2)), {
+        expirationTtl: 120,
+      });
+    } catch {}
   }
 
   return next();

@@ -21,6 +21,11 @@ export async function onRequest(context) {
     return json({ error: "网址格式不正确" }, 400);
   }
 
+  // 安全修复：拒绝内网/私有 IP 和 localhost，防止被用作探测 oracle
+  if (isPrivateOrLocal(host)) {
+    return json({ error: "不支持的域名" }, 403);
+  }
+
   // 计算主域名（去掉 www / 常见子域名前缀，保留注册域）
   const apex = apexDomain(host);
 
@@ -65,6 +70,26 @@ async function isValidIcon(url) {
   } catch {
     return false;
   }
+}
+
+// 安全修复：检测内网/私有 IP 和 localhost
+function isPrivateOrLocal(host) {
+  const lower = host.toLowerCase();
+  if (lower === "localhost" || lower === "::1") return true;
+  // IPv4 私有/保留段
+  const ipMatch = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipMatch) {
+    const [a, b] = [parseInt(ipMatch[1]), parseInt(ipMatch[2])];
+    if (a === 10) return true;                         // 10.0.0.0/8
+    if (a === 127) return true;                        // 127.0.0.0/8 (loopback)
+    if (a === 0) return true;                          // 0.0.0.0/8
+    if (a === 169 && b === 254) return true;           // 169.254.0.0/16 (link-local)
+    if (a === 192 && b === 168) return true;           // 192.168.0.0/16
+    if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16.0.0/12
+  }
+  // IPv6 私有段
+  if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) return true;
+  return false;
 }
 
 // 提取注册主域名：如 invite.zooproxy.com -> zooproxy.com

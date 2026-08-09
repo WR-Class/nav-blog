@@ -2,9 +2,15 @@
 // 探测一个 AI Token 中转站（new-api 系）的公开定价信息。
 // 返回：站名、公告、分组倍率、可用分组、模型列表（含倍率/分档表达式）。
 // 无法探测时返回 error 说明原因（非 new-api / 需要登录 / 无法访问）。
+//
+// 安全修复（SSRF 防护）：
+//   1. 主机白名单 —— 仅允许 /api/relay 清单中已配置的中转站域名
+//   2. 强制 HTTPS —— 拒绝 http:// 协议
+//   3. 出站超时 —— 5 秒 AbortController，防止慢速目标占用 Worker
+//   4. 响应截断 —— announcements / registerInfo 字段长度限制，减少回显面
 
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
   const reqUrl = new URL(request.url);
   const raw = reqUrl.searchParams.get("url");
   if (!raw) return json({ error: "缺少 url 参数" }, 400);
@@ -14,9 +20,29 @@ export async function onRequest(context) {
   try {
     const s = raw.trim();
     const u = new URL(s.startsWith("http") ? s : "https://" + s);
+    // 强制 HTTPS，阻止 http:// 协议
+    if (u.protocol !== "https:") {
+      return json({ error: "仅支持 HTTPS 协议" }, 400);
+    }
     base = u.origin;
   } catch {
     return json({ error: "网址格式不正确" }, 400);
+  }
+
+  // SSRF 防护：主机白名单校验 —— 仅允许 /api/relay 清单中已配置的中转站域名
+  const allowedDomains = await getRelayDomains(env);
+  const targetHost = new URL(base).hostname;
+  if (allowedDomains.size > 0 && !allowedDomains.has(targetHost)) {
+    return json({ error: "不允许探测未在中转清单中的域名" }, 403);
+  }
+
+  // 出站超时控制（5秒），防止慢速目标占用 Worker 执行时间
+  const FETCH_TIMEOUT = 5000;
+  function fetchWithTimeout(url, opts = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    return fetch(url, { ...opts, signal: controller.signal })
+      .finally(() => clearTimeout(timer));
   }
 
   const headers = { "User-Agent": "Mozilla/5.0", "Accept": "application/json" };
@@ -24,7 +50,7 @@ export async function onRequest(context) {
   // 1) 读取 /api/status 判断是不是 new-api、定价是否公开
   let status = null;
   try {
-    const r = await fetch(base + "/api/status", { headers, cf: { cacheTtl: 60 } });
+    const r = await fetchWithTimeout(base + "/api/status", { headers, cf: { cacheTtl: 60 } });
     if (r.ok) {
       const t = await r.text();
       try { status = JSON.parse(t); } catch {}
@@ -46,6 +72,8 @@ export async function onRequest(context) {
       }
     } catch {}
     // 注册 / 白嫖相关信息（new-api 的 /api/status 会暴露这些）
+    // 安全修复：截断字符串字段，减少回显面
+    const truncate = (s, max = 200) => typeof s === "string" ? s.slice(0, max) : s;
     registerInfo = {
       registerEnabled: sd.register_enabled === true,
       passwordRegister: sd.password_register_enabled === true,
@@ -54,21 +82,17 @@ export async function onRequest(context) {
       linuxdoOAuth: sd.linuxdo_oauth === true,
       telegramOAuth: sd.telegram_oauth === true,
       wechatLogin: sd.wechat_login === true,
-      turnstile: sd.turnstile_check === true,          // 注册是否有人机验证
-      checkin: sd.checkin_enabled === true,            // 是否支持每日签到送额度
-      quotaDisplayType: sd.quota_display_type || "",   // USD / CNY
-      quotaPerUnit: sd.quota_per_unit,                 // 每 $1 对应的额度单位
-      usdExchangeRate: sd.usd_exchange_rate,           // 美元汇率
-      logo: sd.logo || "",
-      serverAddress: sd.server_address || base,
-      docsLink: sd.docs_link || "",
+      turnstile: sd.turnstile_check === true,
+      checkin: sd.checkin_enabled === true,
+      quotaDisplayType: truncate(sd.quota_display_type || ""),
+      logo: truncate(sd.logo || "", 300),
     };
   }
 
   // 2) 读取 /api/pricing
   let pricing = null, pricingStatus = 0;
   try {
-    const r = await fetch(base + "/api/pricing", { headers, cf: { cacheTtl: 60 } });
+    const r = await fetchWithTimeout(base + "/api/pricing", { headers, cf: { cacheTtl: 60 } });
     pricingStatus = r.status;
     if (r.ok) {
       const t = await r.text();
@@ -79,7 +103,7 @@ export async function onRequest(context) {
   // 2.5) 若 /api/status 没拿到站名（非 new-api 或自研站），退回抓首页 HTML 的标题
   if (!siteName) {
     try {
-      const r = await fetch(base + "/", { headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/html" }, cf: { cacheTtl: 60 } });
+      const r = await fetchWithTimeout(base + "/", { headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/html" }, cf: { cacheTtl: 60 } });
       if (r.ok) {
         const html = await r.text();
         // 优先 og:site_name，其次 <title>
@@ -98,10 +122,14 @@ export async function onRequest(context) {
     } catch {}
   }
 
+  // 安全修复：公告内容截断（单条 ≤500 字符）
+  const truncAnnouncements = (list) =>
+    list.map((a) => ({ content: typeof a.content === "string" ? a.content.slice(0, 500) : "", type: a.type })).slice(0, 5);
+
   // 判定结果
   if (!pricing || !Array.isArray(pricing.data)) {
     if (pricingStatus === 401 || pricingStatus === 403 || pricingRequireAuth) {
-      return json({ error: "该站定价需要登录才能查看（requireAuth），无法探测价格", base, siteName, registerInfo, announcements: announcements.map((a) => ({ content: a.content, type: a.type })).slice(0, 5) }, 200);
+      return json({ error: "该站定价需要登录才能查看（requireAuth），无法探测价格", base, siteName, registerInfo, announcements: truncAnnouncements(announcements) }, 200);
     }
     if (status === null && pricingStatus === 0) {
       return json({ error: "无法访问该站点（网络失败或域名无效）", base }, 200);
@@ -128,13 +156,36 @@ export async function onRequest(context) {
     base,
     siteName,
     registerInfo,
-    announcements: announcements.map((a) => ({ content: a.content, type: a.type })).slice(0, 5),
+    announcements: truncAnnouncements(announcements),
     autoGroups: pricing.auto_groups || ["default"],
     groupRatio: pricing.group_ratio || { default: 1 },
     usableGroup: pricing.usable_group || {},
     models,
     probedAt: Date.now(),
   });
+}
+
+// 从 KV 读取 /api/relay 清单中的中转站域名，构建白名单
+async function getRelayDomains(env) {
+  try {
+    if (!env || !env.NAV_DB) return new Set();
+    const raw = await env.NAV_DB.get("relay_data");
+    const data = raw ? JSON.parse(raw) : { sites: [] };
+    const domains = new Set();
+    if (data.sites && Array.isArray(data.sites)) {
+      for (const site of data.sites) {
+        if (site.url) {
+          try {
+            const u = new URL(site.url.startsWith("http") ? site.url : "https://" + site.url);
+            domains.add(u.hostname);
+          } catch {}
+        }
+      }
+    }
+    return domains;
+  } catch {
+    return new Set();
+  }
 }
 
 function json(obj, status = 200) {

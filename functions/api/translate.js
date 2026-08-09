@@ -9,11 +9,50 @@
 //   1. 逐条查 KV 缓存（键 tr:<to>:<原文>），命中直接用，翻译只做一次，永久缓存。
 //   2. 未命中的调用 Google 免费翻译端点（无需 API Key），成功后写回 KV。
 //   3. 任何一条翻译失败都回退成原文，绝不让页面报错。
+//
+// 安全修复（防滥用）：
+//   1. Referer 校验 —— 仅允许自有域名发起翻译请求
+//   2. 批量上限 —— 单次最多 20 条文本
+//   3. 长度上限 —— 单条文本不超过 5000 字符
+//   4. IP 频控 —— 每 IP 每分钟最多 60 次（KV 滑动窗口）
 
 export async function onRequest(context) {
   const { request, env } = context;
   if (request.method.toUpperCase() !== "POST") {
     return json({ error: "只支持 POST" }, 405);
+  }
+
+  // ========== 安全修复 1: Referer 校验 ==========
+  const referer = request.headers.get("Referer") || "";
+  const allowedOrigins = [
+    "https://wurong.cc.cd",
+    "https://wurong.bot.cd",
+    "https://nav-blog.pages.dev",
+  ];
+  const isAllowed = allowedOrigins.some((origin) => referer.startsWith(origin));
+  if (!isAllowed) {
+    return json({ error: "Referer 验证失败" }, 403);
+  }
+
+  // ========== 安全修复 4: IP 频控（每分钟 60 次） ==========
+  const clientIP = request.headers.get("cf-connecting-ip") || "unknown";
+  if (env.NAV_DB) {
+    const rateLimitKey = `rl:translate:${clientIP}`;
+    const now = Date.now();
+    const windowMs = 60 * 1000;
+    const maxRequests = 60;
+    try {
+      const raw = await env.NAV_DB.get(rateLimitKey);
+      const entries = raw ? JSON.parse(raw) : [];
+      const recent = entries.filter((t) => now - t < windowMs);
+      if (recent.length >= maxRequests) {
+        return json({ error: "请求过于频繁，请稍后再试" }, 429);
+      }
+      recent.push(now);
+      await env.NAV_DB.put(rateLimitKey, JSON.stringify(recent.slice(-maxRequests * 2)), {
+        expirationTtl: 120,
+      });
+    } catch {}
   }
 
   let body;
@@ -28,6 +67,18 @@ export async function onRequest(context) {
   const texts = Array.isArray(body.texts) ? body.texts : [];
   if (texts.length === 0) {
     return json({ translations: [] });
+  }
+
+  // ========== 安全修复 2: 批量上限 ==========
+  if (texts.length > 20) {
+    return json({ error: "单次翻译最多 20 条文本" }, 400);
+  }
+
+  // ========== 安全修复 3: 长度上限 ==========
+  for (const text of texts) {
+    if (typeof text === "string" && text.length > 5000) {
+      return json({ error: "单条文本不超过 5000 字符" }, 400);
+    }
   }
 
   // 去重，减少翻译次数
