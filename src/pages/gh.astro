@@ -6,11 +6,11 @@ import Container from "@/components/container.astro";
 <Layout title="GitHub 项目">
   <Container>
     <div class="mx-auto max-w-3xl mt-14">
-      <a href="/github" class="text-indigo-600 dark:text-indigo-400 hover:underline text-sm" data-i18n="← 返回 GitHub 专区|← Back to GitHub Zone">← 返回 GitHub 专区</a>
+      <a href="/github" class="inline-block site-card bg-white dark:bg-slate-800 rounded-lg px-4 py-2 shadow text-indigo-600 dark:text-indigo-400 hover:underline text-sm" data-i18n="← 返回 GitHub 专区|← Back to GitHub Zone">← 返回 GitHub 专区</a>
 
-      <div id="loading" class="text-center text-slate-400 py-20">正在加载项目信息…</div>
+      <div id="loading" class="site-card bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg text-center text-slate-400 mt-4">正在加载项目信息…</div>
 
-      <article id="project" class="hidden mt-4">
+      <article id="project" class="site-card hidden bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg mt-4">
         <div class="flex items-center gap-4">
           <img id="p-avatar" class="w-14 h-14 rounded-lg" src="" alt="" onerror="this.style.visibility='hidden'" />
           <div>
@@ -40,7 +40,7 @@ import Container from "@/components/container.astro";
         <div id="p-readme" class="prose prose-lg dark:prose-invert mt-10 max-w-none border-t pt-8"></div>
       </article>
 
-      <div id="notfound" class="hidden text-center text-slate-400 py-20">
+      <div id="notfound" class="site-card hidden bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg text-center text-slate-400 mt-4">
         <span data-i18n="没有找到这个项目|Project not found">没有找到这个项目</span>
       </div>
     </div>
