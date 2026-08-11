@@ -3,11 +3,12 @@
 // 返回：站名、公告、分组倍率、可用分组、模型列表（含倍率/分档表达式）。
 // 无法探测时返回 error 说明原因（非 new-api / 需要登录 / 无法访问）。
 //
-// 安全修复（SSRF 防护）：
-//   1. 主机白名单 —— 仅允许 /api/relay 清单中已配置的中转站域名
-//   2. 强制 HTTPS —— 拒绝 http:// 协议
+// 安全防护（SSRF 防护）：
+//   1. 强制 HTTPS —— 拒绝 http:// 协议
+//   2. 拒绝私有 IP / 内网地址 —— 防止访问内部服务
 //   3. 出站超时 —— 5 秒 AbortController，防止慢速目标占用 Worker
 //   4. 响应截断 —— announcements / registerInfo 字段长度限制，减少回显面
+//   5. IP 速率限制 —— _middleware.js 中 30 次/分钟
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -17,6 +18,7 @@ export async function onRequest(context) {
 
   // 规范化出站点根地址
   let base;
+  let targetHost;
   try {
     const s = raw.trim();
     const u = new URL(s.startsWith("http") ? s : "https://" + s);
@@ -25,15 +27,14 @@ export async function onRequest(context) {
       return json({ error: "仅支持 HTTPS 协议" }, 400);
     }
     base = u.origin;
+    targetHost = u.hostname;
   } catch {
     return json({ error: "网址格式不正确" }, 400);
   }
 
-  // SSRF 防护：主机白名单校验 —— 仅允许 /api/relay 清单中已配置的中转站域名
-  const allowedDomains = await getRelayDomains(env);
-  const targetHost = new URL(base).hostname;
-  if (allowedDomains.size > 0 && !allowedDomains.has(targetHost)) {
-    return json({ error: "不允许探测未在中转清单中的域名" }, 403);
+  // SSRF 防护：拒绝私有 IP / 内网地址 / localhost
+  if (isPrivateOrInternalHost(targetHost)) {
+    return json({ error: "不允许探测内网地址或私有 IP" }, 403);
   }
 
   // 出站超时控制（5秒），防止慢速目标占用 Worker 执行时间
@@ -165,27 +166,32 @@ export async function onRequest(context) {
   });
 }
 
-// 从 KV 读取 /api/relay 清单中的中转站域名，构建白名单
-async function getRelayDomains(env) {
-  try {
-    if (!env || !env.NAV_DB) return new Set();
-    const raw = await env.NAV_DB.get("relay_data");
-    const data = raw ? JSON.parse(raw) : { sites: [] };
-    const domains = new Set();
-    if (data.sites && Array.isArray(data.sites)) {
-      for (const site of data.sites) {
-        if (site.url) {
-          try {
-            const u = new URL(site.url.startsWith("http") ? site.url : "https://" + site.url);
-            domains.add(u.hostname);
-          } catch {}
-        }
-      }
-    }
-    return domains;
-  } catch {
-    return new Set();
+// SSRF 防护：检测是否为私有 IP / 内网地址 / localhost
+// 拦截目标：127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+//           169.254.0.0/16（链路本地）, 0.0.0.0/8, IPv6 本地地址,
+//           localhost, *.local, *.internal, *.localhost
+function isPrivateOrInternalHost(hostname) {
+  const h = hostname.toLowerCase().trim();
+  // localhost 及内网域名后缀
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) {
+    return true;
   }
+  // IPv4 地址校验
+  const ipMatch = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipMatch) {
+    const [_, a, b] = ipMatch.map(Number);
+    if (a === 10) return true;                    // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;       // 192.168.0.0/16
+    if (a === 127) return true;                    // 127.0.0.0/8 (loopback)
+    if (a === 169 && b === 254) return true;       // 169.254.0.0/16 (link-local)
+    if (a === 0) return true;                      // 0.0.0.0/8
+  }
+  // IPv6 本地地址
+  if (h === "::1" || h === "0:0:0:0:0:0:0:1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) {
+    return true;
+  }
+  return false;
 }
 
 function json(obj, status = 200) {
