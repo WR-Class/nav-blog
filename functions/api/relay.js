@@ -18,7 +18,7 @@ export async function onRequest(context) {
     const data = raw ? JSON.parse(raw) : DEFAULT_DATA;
     // 公开响应：剥离内部字段 _probe / quotaPerUnit / usdExchangeRate / docsLink / serverAddress
     const PUBLIC_FIELDS = new Set([
-      "name", "nameEn", "url", "registerUrl", "registerMethod", "registerMethodEn",
+      "id", "name", "nameEn", "url", "registerUrl", "registerMethod", "registerMethodEn",
       "strategy", "strategyEn", "intro", "introEn", "logo",
     ]);
     if (data.sites && Array.isArray(data.sites)) {
