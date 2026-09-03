@@ -94,22 +94,25 @@ export async function onRequest(context) {
 
   try {
     const results = await searchWeb(query, env);
+    const candidates = results.slice(0, CANDIDATE_LIMIT);
 
-    // 并发提取候选页正文
-    const extracted = [];
+    // 并发提取候选页正文。
+    // 结果必须按检索排名回填，不能用 push —— Promise.all 的完成顺序取决于
+    // 各站响应快慢，用 push 会让证据顺序变成「谁先返回谁靠前」，于是
+    // [1] 指向的是最快的页面而不是最相关的页面，靠后的高相关页面
+    // 还可能被证据字数上限截掉。
+    const slots = new Array(candidates.length).fill(null);
     await Promise.all(
-      results.slice(0, CANDIDATE_LIMIT).map(async (r) => {
-        const page = await extractPage(r);
-        if (page) extracted.push(page);
+      candidates.map(async (r, i) => {
+        slots[i] = await extractPage(r);
       })
     );
+    const extracted = slots.filter(Boolean);
 
     // 提取失败的页面（反爬站点）退化为使用搜索摘要作为证据
     const gotUrls = new Set(extracted.map((p) => p.url));
     const examHint = /题|答案|选项|判断|填空|选择|单选|多选|正确|错误|[A-D][.、]/;
-    const fallback = results
-      .slice(0, CANDIDATE_LIMIT)
-      .filter((r) => !gotUrls.has(r.url) && r.snippet);
+    const fallback = candidates.filter((r) => !gotUrls.has(r.url) && r.snippet);
     fallback.sort(
       (a, b) => (examHint.test(b.snippet) ? 1 : 0) - (examHint.test(a.snippet) ? 1 : 0)
     );
@@ -728,7 +731,10 @@ function buildPrompt(query, pages) {
     "3. 资料不足时明确说明不确定或资料不足，不要猜测、不要编造来源。",
     "4. 区分事实与推断。",
     "5. 若用户在找题目/试题/答案：资料里出现的题干、选项（A/B/C/D）、判断、填空、答案，即使只出现在搜索摘要中，也要如实、尽量完整地整理列出并标注出处；确实不含题目的资料直接跳过，不要为凑数罗列无关页面。",
-    "6. 直接给出答案本身，不要复述这些要求，也不要输出思考过程。",
+    "6. 先直接回答问题本身，用一两句话说清「是什么」，再展开细节。不要一上来就罗列产品清单或参数。",
+    "7. 优先回答用户真正关心的部分：问「是什么」就先给定义和用途，问「区别」就先给对比，问「怎么做」就先给步骤。",
+    "8. 资料里若有和问题直接相关的常见场景、注意事项或风险，值得一并说明，但同样只能基于资料。",
+    "9. 直接给出答案本身，不要复述这些要求，也不要输出思考过程，不要说「根据资料」「以上内容基于资料」这类套话。",
   ].join("\n");
 }
 
