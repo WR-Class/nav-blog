@@ -399,7 +399,7 @@ function ddgHtmlGet(q) {
   );
 }
 
-// 备用 1：lite 子域是另一台主机，限流独立计算
+// 备用 1：lite 子域（另一台主机，但共用同一套限流，只能串行重试）
 function ddgLiteGet(q) {
   return scrape(
     "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(q),
@@ -441,25 +441,24 @@ function bingGet(q) {
   );
 }
 
-// 一轮检索：html 与 lite 并发（不同主机），两者结果合并；都不相关时再退到
-// POST 通道，最后才用 Bing。同一主机上并发多个查询会触发 202 挑战，
-// 所以并发只发生在「不同主机之间」。
+// 一轮检索：依次尝试各通道，第一个拿到「相关结果」的通道即返回。
+//
+// 为什么是串行而不是并发：html.duckduckgo.com 与 lite.duckduckgo.com 虽然是
+// 两个主机名，但共用同一套反爬限流。同时发两个请求会让两边一起返回 202 挑战页，
+// 实测并发版本经常两路全废、最后掉到 Bing，只剩 1 条结果。
+// 串行 + 退避反而更快拿到结果，因为第一次通常就成功。
 async function searchOnce(q, queryTokens) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
+  // 顺序：主通道 → lite → 主通道重试 → 表单 POST → Bing 兜底
+  const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlGet, ddgHtmlPost, bingGet];
 
-  const settled = await Promise.allSettled([ddgHtmlGet(q), ddgLiteGet(q)]);
-  const both = [];
-  for (const s of settled) {
-    if (s.status === "fulfilled") both.push(...keep(s.value));
-  }
-  if (both.length) return both;
-
-  for (const engine of [ddgHtmlPost, bingGet]) {
+  for (let i = 0; i < channels.length; i++) {
+    if (i > 0) await sleep(400);
     try {
-      const ok = keep(await engine(q));
+      const ok = keep(await channels[i](q));
       if (ok.length) return ok;
     } catch {
-      /* 换下一个通道 */
+      /* 超时或网络错误，换下一个通道 */
     }
   }
   return [];
