@@ -441,27 +441,40 @@ function bingGet(q) {
   );
 }
 
-// 一轮检索：依次尝试各通道，第一个拿到「相关结果」的通道即返回。
+// 一轮检索：依次尝试各通道，累积到够用的相关结果再返回。
 //
 // 为什么是串行而不是并发：html.duckduckgo.com 与 lite.duckduckgo.com 虽然是
 // 两个主机名，但共用同一套反爬限流。同时发两个请求会让两边一起返回 202 挑战页，
 // 实测并发版本经常两路全废、最后掉到 Bing，只剩 1 条结果。
-// 串行 + 退避反而更快拿到结果，因为第一次通常就成功。
+//
+// 为什么不能「第一个非空通道就收工」：某个通道偶尔只解析出 1 条相关结果
+// （被部分挑战，或 Bing 兜底本身相关性差）。那样答案只有单一来源，可信度不够。
+// 所以拿到的相关结果少于 MIN_RESULTS 时继续走下一个通道，把结果并起来。
+const MIN_RESULTS = 4;
+
 async function searchOnce(q, queryTokens) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
   // 顺序：主通道 → lite → 主通道重试 → 表单 POST → Bing 兜底
   const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlGet, ddgHtmlPost, bingGet];
 
+  const acc = [];
+  const seen = new Set();
   for (let i = 0; i < channels.length; i++) {
     if (i > 0) await sleep(400);
     try {
-      const ok = keep(await channels[i](q));
-      if (ok.length) return ok;
+      for (const r of keep(await channels[i](q))) {
+        const key = cleanUrl(r.url);
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          acc.push(r);
+        }
+      }
     } catch {
       /* 超时或网络错误，换下一个通道 */
     }
+    if (acc.length >= MIN_RESULTS) break;
   }
-  return [];
+  return acc;
 }
 
 async function searchWeb(query) {
@@ -476,7 +489,7 @@ async function searchWeb(query) {
   const variants = expandQueries(query);
   for (let i = 0; i < variants.length; i++) {
     if (i > 0) {
-      if (collector.list.length >= 4) break;
+      if (collector.list.length >= MIN_RESULTS) break;
       await sleep(500);
     }
     const results = await searchOnce(variants[i], queryTokens).catch(() => []);
