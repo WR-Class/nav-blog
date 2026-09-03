@@ -356,12 +356,23 @@ const BROWSER_HEADERS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 给任意 Promise 加超时，超时后返回兜底值而不是抛错。
+// 用于浏览器救援：它偶尔会因为额度或排队而久等，不能让用户跟着等。
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 // 单个通道的超时。原来是 12s，但最坏情况会叠加：
 // 3 个查询变体 × 5 个通道 × 12s = 180s。实测确实出现过 116s 才返回。
 const CHANNEL_TIMEOUT_MS = 7000;
 // 整个检索阶段的总预算。用完就带着已有结果进入下一步，
 // 宁可来源少一点，也不让用户干等。正文提取和模型生成还需要时间。
 const SEARCH_BUDGET_MS = 20000;
+// 浏览器救援的超时。实测正常 2–3 秒完成，10 秒足够覆盖排队。
+const BROWSER_TIMEOUT_MS = 10000;
 
 async function scrape(url, opts, itemSel, snippetSel, unwrap) {
   const resp = await fetchTimeout(url, opts, CHANNEL_TIMEOUT_MS);
@@ -513,7 +524,7 @@ async function browserScrape(q, env) {
 // 只有完全空手才继续花配额。
 const MIN_RESULTS = 4;
 // 单次用户搜索允许的对外检索请求总数（含所有查询变体与兜底通道）
-const MAX_SEARCH_REQUESTS = 0; // TEMP: 强制走浏览器救援通道，验证后改回 4
+const MAX_SEARCH_REQUESTS = 4;
 
 async function searchOnce(q, queryTokens, state) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
@@ -561,14 +572,20 @@ async function searchWeb(query, env) {
     if (collector.list.length >= MAX_RESULTS) break;
   }
 
-  // 普通抓取彻底失败（全被 202 挑战挡住）时，才动用真实浏览器救一次。
-  // 这是原先返回「没有检索到可用的网页资料」的唯一场景。
-  if (collector.list.length === 0) {
+  // 普通抓取结果太少时，用真实浏览器补一次。
+  //
+  // 触发条件是「少于 MIN_RESULTS」而不是「完全为空」：只有 1–2 条来源的答案
+  // 同样不可信，而这正是用户能直接感觉到的不稳定。实测真实 Chromium 从未被
+  // 挑战，每次稳定 10 条，所以它既救「0 条」也救「太少」。
+  //
+  // 额度：免费套餐每天 10 分钟浏览器时间，单次 scrape 约 2 秒，约合 300 次/天。
+  // 正常查询根本不会走到这里，只有被挑战时才花这份额度。用尽后静默降级。
+  if (collector.list.length < MIN_RESULTS) {
     try {
-      const rescued = await browserScrape(query, env);
+      const rescued = await withTimeout(browserScrape(query, env), BROWSER_TIMEOUT_MS, []);
       rescued.filter((r) => isRelevant(queryTokens, r)).forEach((r) => collector.push(r));
     } catch {
-      /* 浏览器额度用尽或超时：保持空结果，由上层给出诚实提示 */
+      /* 浏览器额度用尽或超时：保留已有结果，由上层给出诚实提示 */
     }
   }
 
