@@ -93,23 +93,26 @@ export async function onRequest(context) {
   }
 
   try {
-    const results = await searchWeb(query);
+    const results = await searchWeb(query, env);
+    const candidates = results.slice(0, CANDIDATE_LIMIT);
 
-    // 并发提取候选页正文
-    const extracted = [];
+    // 并发提取候选页正文。
+    // 结果必须按检索排名回填，不能用 push —— Promise.all 的完成顺序取决于
+    // 各站响应快慢，用 push 会让证据顺序变成「谁先返回谁靠前」，于是
+    // [1] 指向的是最快的页面而不是最相关的页面，靠后的高相关页面
+    // 还可能被证据字数上限截掉。
+    const slots = new Array(candidates.length).fill(null);
     await Promise.all(
-      results.slice(0, CANDIDATE_LIMIT).map(async (r) => {
-        const page = await extractPage(r);
-        if (page) extracted.push(page);
+      candidates.map(async (r, i) => {
+        slots[i] = await extractPage(r);
       })
     );
+    const extracted = slots.filter(Boolean);
 
     // 提取失败的页面（反爬站点）退化为使用搜索摘要作为证据
     const gotUrls = new Set(extracted.map((p) => p.url));
     const examHint = /题|答案|选项|判断|填空|选择|单选|多选|正确|错误|[A-D][.、]/;
-    const fallback = results
-      .slice(0, CANDIDATE_LIMIT)
-      .filter((r) => !gotUrls.has(r.url) && r.snippet);
+    const fallback = candidates.filter((r) => !gotUrls.has(r.url) && r.snippet);
     fallback.sort(
       (a, b) => (examHint.test(b.snippet) ? 1 : 0) - (examHint.test(a.snippet) ? 1 : 0)
     );
@@ -331,6 +334,41 @@ function isRelevant(queryTokens, item) {
   return hit >= (queryTokens.size <= 2 ? 1 : 2);
 }
 
+// 疑问词与套话：出现在查询里但不携带检索意图。
+// 计算「相关度」时必须排除它们，否则 "M365 E3 E5账号是什么" 里的
+// 是什/什么/号是 会把分母撑大，真正命中 E3/E5 的官方文档反而显得不相关。
+const STOP_TOKENS = new Set([
+  "是什", "什么", "么意", "意思", "怎么", "么办", "么样", "如何", "为什",
+  "哪些", "有哪", "哪个", "多少", "是多", "可以", "需要", "一下", "求解",
+  "what", "how", "why", "the", "and", "for", "with", "from", "that", "this", "does",
+]);
+
+// 相关度 = 命中的实义词 / 查询的实义词总数。
+//
+// 为什么需要它：isRelevant 的「命中 2 个词」是绝对门槛，
+// 查询 "2026年 安全生产 考试题库 答案" 有 9 个词，一个
+// 「2026年国家网络安全宣传周」的政府页面靠 2026 + 安全 就能过关。
+// DDG 被限流时回的正是这种「状态码 200、内容全不相干」的降级结果。
+// 改成看比例，这类页面只有 0.25，真正的题库页面接近 1.0，一刀切得很干净。
+function informativeTokens(queryTokens) {
+  const out = new Set();
+  for (const t of queryTokens) {
+    if (STOP_TOKENS.has(t)) continue;
+    // 单个汉字（如 "2026年" 里的 年）信息量太低，不计入分母
+    if (t.length === 1 && !/[a-z0-9]/i.test(t)) continue;
+    out.add(t);
+  }
+  return out.size ? out : queryTokens;
+}
+
+function scoreOf(infoTokens, item) {
+  if (!infoTokens.size) return 0;
+  const hay = tokenize(`${item.title || ""} ${item.snippet || ""} ${item.url || ""}`);
+  let hit = 0;
+  for (const t of infoTokens) if (hay.has(t)) hit++;
+  return hit / infoTokens.size;
+}
+
 /* ---------------- 检索源（均无需 API Key） ---------------- */
 
 // 实测结论（Worker 出口，2026-09）：
@@ -356,12 +394,23 @@ const BROWSER_HEADERS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 给任意 Promise 加超时，超时后返回兜底值而不是抛错。
+// 用于浏览器救援：它偶尔会因为额度或排队而久等，不能让用户跟着等。
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 // 单个通道的超时。原来是 12s，但最坏情况会叠加：
 // 3 个查询变体 × 5 个通道 × 12s = 180s。实测确实出现过 116s 才返回。
 const CHANNEL_TIMEOUT_MS = 7000;
 // 整个检索阶段的总预算。用完就带着已有结果进入下一步，
 // 宁可来源少一点，也不让用户干等。正文提取和模型生成还需要时间。
 const SEARCH_BUDGET_MS = 20000;
+// 浏览器救援的超时。实测正常 2–3 秒完成，10 秒足够覆盖排队。
+const BROWSER_TIMEOUT_MS = 10000;
 
 async function scrape(url, opts, itemSel, snippetSel, unwrap) {
   const resp = await fetchTimeout(url, opts, CHANNEL_TIMEOUT_MS);
@@ -450,6 +499,56 @@ function bingGet(q) {
   );
 }
 
+/* ---------------- 救援通道：真实浏览器 ---------------- */
+
+// Browser Run 绑定：在 Cloudflare 上跑一个真实 Chromium 去打开搜索页。
+//
+// 为什么需要它：普通 fetch 抓 DuckDuckGo 会间歇性收到 202 挑战页，正文里
+// 没有任何结果。那是「装成浏览器」和「就是浏览器」的区别 —— 实测真实
+// Chromium 每次都稳定拿到 10 条结果，从未被挑战。
+//
+// 为什么不把它当常规通道：免费额度是每天 10 分钟浏览器时间，且新建实例
+// 有每分钟上限（实测连续请求会撞 2001 Rate limit exceeded）。所以它只在
+// 普通抓取全被挡住时出场 —— 恰好就是原来会返回「没有检索到资料」的那种情况。
+//
+// quickAction 返回的是 Response，需要自己解 JSON；且不同版本可能返回
+// 完整信封 {success,result} 或直接返回数组，两种都要能处理。
+async function browserScrape(q, env) {
+  const br = env.BROWSER;
+  if (!br || typeof br.quickAction !== "function") return [];
+
+  const resp = await br.quickAction("scrape", {
+    url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
+    elements: [{ selector: "a.result__a" }, { selector: "a.result__snippet" }],
+    gotoOptions: { waitUntil: "domcontentloaded", timeout: 15000 },
+  });
+  if (!resp || !resp.ok) return [];
+
+  const body = await resp.json();
+  const payload = body && body.result !== undefined ? body.result : body;
+  const groups = Array.isArray(payload) ? payload : [];
+
+  const pick = (sel) => {
+    const g = groups.find((x) => x && x.selector === sel);
+    return (g && g.results) || [];
+  };
+  const links = pick("a.result__a");
+  const snippets = pick("a.result__snippet");
+
+  const out = [];
+  for (let i = 0; i < links.length; i++) {
+    const item = links[i] || {};
+    const attrs = item.attributes || [];
+    const hrefAttr = attrs.find((a) => a && a.name === "href");
+    const url = ddgUnwrap(hrefAttr && hrefAttr.value);
+    const title = String(item.text || "").trim();
+    if (!url || !/^https?:/.test(url) || !title) continue;
+    // 两个选择器各自按文档顺序返回，同序号即同一条结果
+    out.push({ url, title, snippet: String((snippets[i] || {}).text || "").trim() });
+  }
+  return out;
+}
+
 // 一轮检索：轮流尝试各通道，但整个检索阶段的对外请求数有硬上限。
 //
 // 为什么是串行而不是并发：html.duckduckgo.com 与 lite.duckduckgo.com 虽然是
@@ -464,6 +563,10 @@ function bingGet(q) {
 const MIN_RESULTS = 4;
 // 单次用户搜索允许的对外检索请求总数（含所有查询变体与兜底通道）
 const MAX_SEARCH_REQUESTS = 4;
+// 相关度下限：低于这个比例的结果几乎肯定是限流后的降级结果。
+// 定在 0.3 是因为实测「2026年国家网络安全宣传周」对
+// "2026年 安全生产 考试题库 答案" 只有 0.25，而真正的题库页面在 0.7 以上。
+const WEAK_SCORE = 0.3;
 
 async function searchOnce(q, queryTokens, state) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
@@ -492,7 +595,7 @@ async function searchOnce(q, queryTokens, state) {
   return acc;
 }
 
-async function searchWeb(query) {
+async function searchWeb(query, env) {
   const direct = directUrlResults(query);
   const directUrls = new Set(direct.map((d) => d.url));
   const collector = createCollector();
@@ -511,13 +614,87 @@ async function searchWeb(query) {
     if (collector.list.length >= MAX_RESULTS) break;
   }
 
-  const rest = collector.list
+  // 有效结果不够时，用真实浏览器补一次。
+  //
+  // 判定的是「够不够强」而不是「有没有」：被限流时 DDG 会回一批状态码 200
+  // 但内容完全不相干的页面（问题库返回政府工作报告、节假日通知），
+  // 数量看着够，答案却是空的。这种「假成功」比直接失败更难发现，
+  // 所以先按相关度筛一遍，只数真正像样的结果。
+  //
+  // 实测真实 Chromium 从未被挑战，每次稳定 10 条。
+  // 额度：免费套餐每天 10 分钟浏览器时间，单次 scrape 约 2 秒，约合 300 次/天。
+  // 正常查询不会走到这里，用尽后静默降级，不影响主链路。
+  const infoTokens = informativeTokens(queryTokens);
+  const strongBefore = collector.list.filter((r) => scoreOf(infoTokens, r) >= WEAK_SCORE).length;
+  if (strongBefore < MIN_RESULTS) {
+    try {
+      const extra = await withTimeout(browserScrape(query, env), BROWSER_TIMEOUT_MS, []);
+      extra.filter((r) => isRelevant(queryTokens, r)).forEach((r) => collector.push(r));
+    } catch {
+      /* 浏览器额度用尽或超时：保留已有结果，由上层给出诚实提示 */
+    }
+  }
+
+  // 按相关度排序，并丢掉明显跑偏的结果。
+  //
+  // 排序而不只是过滤：证据顺序决定 [1] 指向谁，也决定字数上限先截掉谁。
+  //
+  // 门槛的两段式设计：只有在「手里至少有一条像样结果」时才启用过滤，
+  // 门槛取最高分的一半。若整批结果分数都低（冷门问题、长句提问只命中一部分
+  // 词面），就不过滤，只排序 —— 固定门槛会把唯一的几条有效结果也删掉，
+  // 反而制造出空答案。这时宁可让模型基于弱证据保守作答。
+  const scored = collector.list.map((r) => ({ r, s: scoreOf(infoTokens, r) }));
+  scored.sort((a, b) => b.s - a.s);
+  const best = scored.length ? scored[0].s : 0;
+  const floor = best >= WEAK_SCORE ? Math.max(WEAK_SCORE, best * 0.5) : 0;
+  const ordered = scored.filter((x) => x.s >= floor).map((x) => x.r);
+
+  const rest = ordered
     .filter((r) => !directUrls.has(r.url))
     .slice(0, Math.max(0, MAX_RESULTS - direct.length));
   return direct.concat(rest);
 }
 
 /* ---------------- 正文提取 ---------------- */
+
+// 结构性噪点：整块移除（remove 会连同子节点一起丢掉）。
+// 侧边栏、页脚、导航里塞的「热门文章 / 分类专栏 / 大家在看」会挤占证据额度 ——
+// 实测一篇 CSDN 文章提取到 1607 字符，其中一半以上是这类内容。
+const NOISE_CONTAINERS =
+  "script, style, noscript, template, svg, iframe, form, nav, aside, footer, header";
+
+// 行级噪点：正文容器内部的互动条与站点样板。
+//
+// 不逐条枚举短语，而是看「操作词密度」。因为互动条的形态千变万化
+// （"分享 复制链接 分享到 QQ 分享到新浪微博 扫一扫"、"15 收藏 觉得还不错? 一键收藏"），
+// 枚举永远追不上；但它们的共性是短行里挤了多个操作词。
+// 阈值定在「短行 + 至少 2 个操作词」，单个操作词不算 ——
+// 否则「分享文件的三种方法」这类正文标题会被误删。
+const ACTION_WORDS = [
+  "点赞", "收藏", "分享", "举报", "评论", "关注", "转发", "打赏", "投币",
+  "登录", "注册", "下载", "扫一扫", "复制链接", "一键", "立减", "抵扣",
+  "上一篇", "下一篇", "展开全部", "收起", "返回顶部", "查看更多", "阅读全文",
+];
+// 整行都是站点样板，直接按前缀判定
+const BOILERPLATE_PREFIX =
+  /^(当前文章被以下社区和专栏收录|版权声明|本文链接|原文链接|热门文章|分类专栏|大家在看|相关推荐|推荐文章|最新评论|博客等级|个人简介|访问量|阅读量|抵扣说明|Copyright|©)/i;
+const COUNTER_LINE = /^[\d,.\s]+(点赞|收藏|评论|阅读|浏览|次)?$/;
+
+function isBoilerplate(line) {
+  if (!line) return true;
+  if (line.length <= 40 && BOILERPLATE_PREFIX.test(line)) return true;
+  if (line.length <= 20 && COUNTER_LINE.test(line)) return true;
+  if (line.length <= 40) {
+    let hits = 0;
+    for (const w of ACTION_WORDS) {
+      if (line.includes(w) && ++hits >= 2) return true;
+    }
+    // 单个操作词但整行几乎只有它：如「立减 ¥」「踩」
+    if (hits === 1 && line.length <= 8) return true;
+    if (hits === 0 && line.length <= 4 && !/[a-z0-9]/i.test(line)) return true;
+  }
+  return false;
+}
 
 async function extractPage(item) {
   try {
@@ -543,25 +720,36 @@ async function extractPage(item) {
     }
     if (!ct.includes("text/html")) return null;
 
-    const parts = [];
+    // 按块收集：同一个 <p>/<li> 的多个文本片段要拼成一行再判噪点，
+    // 否则「点赞」和它前后的字会被拆开，行级过滤就失效了。
+    const lines = [];
+    let buf = "";
     let total = 0;
+    const flush = () => {
+      const line = buf.replace(/\s+/g, " ").trim();
+      buf = "";
+      if (!line || isBoilerplate(line)) return;
+      lines.push(line);
+      total += line.length;
+    };
+
     await new HTMLRewriter()
-      .on("script, style, noscript", { text: (t) => t.remove() })
-      .on("p, h1, h2, h3, h4, h5, h6, li, pre, blockquote", {
+      .on(NOISE_CONTAINERS, { element: (el) => el.remove() })
+      .on("p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, td, dd", {
+        element(el) {
+          flush();
+          el.onEndTag(() => flush());
+        },
         text(t) {
           if (total >= MAX_PAGE_CHARS) return;
-          parts.push(t.text);
-          total += t.text.length;
+          buf += t.text;
         },
       })
       .transform(resp)
       .text();
+    flush();
 
-    const text = parts
-      .join("\n")
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    const text = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
     return text ? { ...item, text: text.slice(0, MAX_PAGE_CHARS) } : null;
   } catch {
     return null;
@@ -600,7 +788,10 @@ function buildPrompt(query, pages) {
     "3. 资料不足时明确说明不确定或资料不足，不要猜测、不要编造来源。",
     "4. 区分事实与推断。",
     "5. 若用户在找题目/试题/答案：资料里出现的题干、选项（A/B/C/D）、判断、填空、答案，即使只出现在搜索摘要中，也要如实、尽量完整地整理列出并标注出处；确实不含题目的资料直接跳过，不要为凑数罗列无关页面。",
-    "6. 直接给出答案本身，不要复述这些要求，也不要输出思考过程。",
+    "6. 先直接回答问题本身，用一两句话说清「是什么」，再展开细节。不要一上来就罗列产品清单或参数。",
+    "7. 优先回答用户真正关心的部分：问「是什么」就先给定义和用途，问「区别」就先给对比，问「怎么做」就先给步骤。",
+    "8. 资料里若有和问题直接相关的常见场景、注意事项或风险，值得一并说明，但同样只能基于资料。",
+    "9. 直接给出答案本身，不要复述这些要求，也不要输出思考过程，不要说「根据资料」「以上内容基于资料」这类套话。",
   ].join("\n");
 }
 
