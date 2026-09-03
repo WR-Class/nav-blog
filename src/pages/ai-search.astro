@@ -1,0 +1,220 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Container from "@/components/container.astro";
+---
+
+<Layout title="AI 搜索">
+  <Container>
+    <div class="mt-14 mb-8">
+      <h1 class="text-4xl lg:text-5xl font-bold text-slate-800 dark:text-slate-100 mb-3"
+        data-i18n="AI 搜索|AI Search">AI 搜索</h1>
+      <p class="text-lg text-slate-500 dark:text-slate-400"
+        data-i18n="检索真实网页后给出带引用来源的答案，不保存任何搜索记录|Reads real web pages and answers with cited sources. Nothing is stored.">检索真实网页后给出带引用来源的答案，不保存任何搜索记录</p>
+    </div>
+
+    <form id="aiForm" class="flex items-stretch gap-2 mb-4">
+      <input id="aiInput" type="text" autocomplete="off"
+        class="flex-1 min-w-0 px-4 py-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:border-indigo-500 outline-none"
+        data-i18n-ph="输入问题，或粘贴一个网址…|Ask a question, or paste a URL…"
+        placeholder="输入问题，或粘贴一个网址…" />
+      <button id="aiSubmit" type="submit"
+        class="flex-shrink-0 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-xl font-medium transition-colors"
+        data-i18n="搜索|Search">搜索</button>
+    </form>
+
+    <p id="aiStatus" class="text-sm text-slate-500 dark:text-slate-400 mb-8"></p>
+
+    <section id="aiResult" class="hidden pb-16">
+      <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 lg:p-8 shadow-lg mb-6">
+        <div id="aiAnswer" class="ai-answer text-slate-700 dark:text-slate-200 leading-relaxed"></div>
+      </div>
+
+      <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-3"
+        data-i18n="参考来源|Sources">参考来源</h2>
+      <div id="aiSources" class="space-y-2"></div>
+    </section>
+
+    <div id="aiEmpty" class="text-center text-slate-400 dark:text-slate-500 py-16 leading-relaxed"
+      data-i18n="输入问题后，系统会检索网页并生成带引用的答案。|Ask a question and the system will search the web and answer with citations.">
+      输入问题后，系统会检索网页并生成带引用的答案。
+    </div>
+  </Container>
+
+  <!-- is:global 是必需的：答案 DOM 由 JS 在运行时注入，
+       Astro 默认的作用域样式不会命中这些元素。选择器全部以 .ai-answer 收窄。 -->
+  <style is:global>
+    .ai-answer p { margin: 0.6em 0; }
+    .ai-answer p.li { padding-left: 1em; }
+    .ai-answer h1, .ai-answer h2, .ai-answer h3,
+    .ai-answer h4, .ai-answer h5, .ai-answer h6 {
+      font-weight: 600;
+      margin: 1.2em 0 0.5em;
+      line-height: 1.4;
+    }
+    .ai-answer h1 { font-size: 1.5rem; }
+    .ai-answer h2 { font-size: 1.25rem; }
+    .ai-answer h3 { font-size: 1.1rem; }
+    .ai-answer h4, .ai-answer h5, .ai-answer h6 { font-size: 1rem; }
+    .ai-answer a { color: #4f46e5; text-decoration: none; word-break: break-word; }
+    .ai-answer a:hover { text-decoration: underline; }
+    .ai-answer strong { font-weight: 600; }
+    .dark .ai-answer a { color: #818cf8; }
+  </style>
+
+  <script is:inline>
+    (function () {
+      const form = document.getElementById('aiForm');
+      const input = document.getElementById('aiInput');
+      const submit = document.getElementById('aiSubmit');
+      const statusEl = document.getElementById('aiStatus');
+      const result = document.getElementById('aiResult');
+      const empty = document.getElementById('aiEmpty');
+      const answerEl = document.getElementById('aiAnswer');
+      const sourcesEl = document.getElementById('aiSources');
+      if (!form || !input) return;
+
+      function detectLang() {
+        const l = (navigator.languages && navigator.languages.length)
+          ? navigator.languages : [navigator.language || ''];
+        for (let i = 0; i < l.length; i++) { if (/^zh\b/i.test(l[i])) return 'zh'; }
+        return 'en';
+      }
+      function lang() {
+        const s = localStorage.getItem('site_lang');
+        return (s === 'zh' || s === 'en') ? s : detectLang();
+      }
+      function en() { return lang() === 'en'; }
+
+      function esc(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      // 占位符随语言切换（与站内其它页面一致）
+      function applyPlaceholder() {
+        const raw = input.getAttribute('data-i18n-ph') || '';
+        const parts = raw.split('|');
+        if (parts.length === 2) input.placeholder = en() ? parts[1] : parts[0];
+      }
+      applyPlaceholder();
+      window.addEventListener('langchange', applyPlaceholder);
+
+      let CUR_SOURCES = [];
+
+      // 单趟扫描：把 [n] 引用、裸链接、**加粗** 转成 HTML，其余全部转义
+      function inline(seg) {
+        seg = String(seg == null ? '' : seg);
+        let out = '', i = 0, m;
+        const re = /\[(\d+)\]|https?:\/\/[^\s<>"'()[\]]+|\*\*(.+?)\*\*/g;
+        while ((m = re.exec(seg)) !== null) {
+          out += esc(seg.slice(i, m.index));
+          const hit = m[0];
+          if (hit.charAt(0) === '[') {
+            const id = m[1];
+            let found = null;
+            for (let k = 0; k < CUR_SOURCES.length; k++) {
+              if (String(CUR_SOURCES[k].id) === id) { found = CUR_SOURCES[k]; break; }
+            }
+            out += found
+              ? '<a href="' + esc(found.url) + '" target="_blank" rel="noopener noreferrer">[' + id + ']</a>'
+              : esc(hit);
+          } else if (hit.charAt(0) === '*') {
+            out += '<strong>' + esc(m[2]) + '</strong>';
+          } else {
+            const url = hit.replace(/[,.;:，。；!?！？]+$/, '');
+            out += '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>';
+          }
+          i = m.index + hit.length;
+        }
+        out += esc(seg.slice(i));
+        return out;
+      }
+
+      // 渲染 Markdown 常见结构（标题、列表、段落），不引入额外依赖
+      function renderAnswer(text) {
+        const lines = String(text == null ? '' : text).split(/\r\n|\n/);
+        let html = '';
+        for (let n = 0; n < lines.length; n++) {
+          const t = lines[n].trim();
+          if (!t) continue;
+          const head = t.match(/^#+/);
+          if (head) {
+            const lvl = Math.min(head[0].length, 6);
+            html += '<h' + lvl + '>' + inline(t.slice(head[0].length).trim()) + '</h' + lvl + '>';
+          } else if (/^[-*]\s+/.test(t)) {
+            html += '<p class="li">• ' + inline(t.replace(/^[-*]\s+/, '')) + '</p>';
+          } else if (/^\d+\.\s+/.test(t)) {
+            html += '<p class="li">' + inline(t) + '</p>';
+          } else {
+            html += '<p>' + inline(t) + '</p>';
+          }
+        }
+        return html;
+      }
+
+      function renderSources(items) {
+        if (!items.length) {
+          sourcesEl.innerHTML = '<p class="text-sm text-slate-400">' +
+            (en() ? 'No sources' : '暂无来源') + '</p>';
+          return;
+        }
+        sourcesEl.innerHTML = items.map(function (s) {
+          return '<div class="bg-white dark:bg-slate-800 rounded-xl px-4 py-3 shadow-sm">' +
+            '<a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer" ' +
+            'class="text-indigo-600 dark:text-indigo-400 font-medium hover:underline break-words">' +
+            '[' + s.id + '] ' + esc(s.title) + '</a>' +
+            '<div class="text-xs text-slate-400 dark:text-slate-500 mt-1">' + esc(s.domain) + '</div>' +
+            '</div>';
+        }).join('');
+      }
+
+      async function run(q) {
+        submit.disabled = true;
+        statusEl.textContent = en()
+          ? 'Searching the web and generating an answer…'
+          : '正在检索网页并生成答案…';
+        result.classList.add('hidden');
+        empty.classList.add('hidden');
+        try {
+          const r = await fetch('/api/ai-search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+          CUR_SOURCES = d.sources || [];
+          answerEl.innerHTML = renderAnswer(d.answer);
+          renderSources(CUR_SOURCES);
+          result.classList.remove('hidden');
+          statusEl.textContent = en()
+            ? 'This query was not stored anywhere.'
+            : '本次搜索内容未被保存。';
+        } catch (err) {
+          statusEl.textContent = (en() ? 'Request failed: ' : '请求失败：') + err.message;
+          empty.classList.remove('hidden');
+        } finally {
+          submit.disabled = false;
+        }
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const q = input.value.trim();
+        if (!q) return;
+        // 把问题同步到地址栏，便于分享和刷新重跑（不写入任何服务端存储）
+        const next = location.pathname + '?q=' + encodeURIComponent(q);
+        history.replaceState(null, '', next);
+        run(q);
+      });
+
+      // 支持从首页搜索框带 ?q= 直接进来自动搜索
+      const q0 = new URLSearchParams(location.search).get('q');
+      if (q0) {
+        input.value = q0;
+        run(q0);
+      }
+    })();
+  </script>
+</Layout>

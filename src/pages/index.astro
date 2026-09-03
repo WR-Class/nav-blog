@@ -24,6 +24,7 @@ const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
             <option value="google">Google</option>
             <option value="bing">Bing</option>
             <option value="baidu">百度</option>
+            <option value="ai">AI 搜索</option>
             <option value="duckduckgo">DuckDuckGo</option>
             <option value="github">GitHub</option>
           </select>
@@ -40,6 +41,9 @@ const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
           </svg>
         </button>
       </form>
+      <p id="aiSearchHint" class="mt-2 text-xs text-slate-400 dark:text-slate-500 text-center hidden">
+        AI 搜索会检索网页并生成带引用来源的答案，不保存任何搜索记录。
+      </p>
     </div>
 
     <!-- 导航链接网格（客户端从 /api/nav 动态加载） -->
@@ -179,22 +183,48 @@ const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
       const form = document.getElementById('searchForm');
       const input = document.getElementById('searchInput');
       const engineSel = document.getElementById('searchEngine');
+      const aiHint = document.getElementById('aiSearchHint');
       if (!form || !input || !engineSel) return;
 
       const ENGINES = {
         google: 'https://www.google.com/search?q=',
         bing: 'https://www.bing.com/search?q=',
         baidu: 'https://www.baidu.com/s?wd=',
+        ai: '/ai-search?q=',
         duckduckgo: 'https://duckduckgo.com/?q=',
         github: 'https://github.com/search?q=',
       };
 
+      // AI 搜索选项的中英文名称
+      function applyEngineLabels() {
+        const en = currentLang() === 'en';
+        const opt = engineSel.querySelector('option[value="ai"]');
+        if (opt) opt.textContent = en ? 'AI Search' : 'AI 搜索';
+      }
+      applyEngineLabels();
+      window.addEventListener('langchange', applyEngineLabels);
+
+      // 选中 AI 搜索时显示说明
+      function applyAiHint() {
+        if (!aiHint) return;
+        const on = engineSel.value === 'ai';
+        aiHint.classList.toggle('hidden', !on);
+        if (on) {
+          aiHint.textContent = currentLang() === 'en'
+            ? 'AI Search reads real web pages and answers with cited sources. Nothing is stored.'
+            : 'AI 搜索会检索网页并生成带引用来源的答案，不保存任何搜索记录。';
+        }
+      }
+
       // 记住上次选择的搜索引擎
       const savedEngine = localStorage.getItem('search_engine');
       if (savedEngine && ENGINES[savedEngine]) engineSel.value = savedEngine;
+      applyAiHint();
       engineSel.addEventListener('change', () => {
         localStorage.setItem('search_engine', engineSel.value);
+        applyAiHint();
       });
+      window.addEventListener('langchange', applyAiHint);
 
       // 占位符随语言切换
       function applyPlaceholder() {
@@ -218,11 +248,17 @@ const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
         e.preventDefault();
         const q = input.value.trim();
         if (!q) return;
+        const engine = engineSel.value;
+        // AI 搜索是站内页面：同标签打开，且网址也交给 AI 去读那个页面
+        if (engine === 'ai') {
+          window.location.href = ENGINES.ai + encodeURIComponent(q);
+          return;
+        }
         let dest;
         if (looksLikeUrl(q)) {
           dest = /^https?:\/\//i.test(q) ? q : 'https://' + q;
         } else {
-          dest = (ENGINES[engineSel.value] || ENGINES.google) + encodeURIComponent(q);
+          dest = (ENGINES[engine] || ENGINES.google) + encodeURIComponent(q);
         }
         window.open(dest, '_blank', 'noopener');
       });
