@@ -597,6 +597,45 @@ async function searchWeb(query, env) {
 
 /* ---------------- 正文提取 ---------------- */
 
+// 结构性噪点：整块移除（remove 会连同子节点一起丢掉）。
+// 侧边栏、页脚、导航里塞的「热门文章 / 分类专栏 / 大家在看」会挤占证据额度 ——
+// 实测一篇 CSDN 文章提取到 1607 字符，其中一半以上是这类内容。
+const NOISE_CONTAINERS =
+  "script, style, noscript, template, svg, iframe, form, nav, aside, footer, header";
+
+// 行级噪点：正文容器内部的互动条与站点样板。
+//
+// 不逐条枚举短语，而是看「操作词密度」。因为互动条的形态千变万化
+// （"分享 复制链接 分享到 QQ 分享到新浪微博 扫一扫"、"15 收藏 觉得还不错? 一键收藏"），
+// 枚举永远追不上；但它们的共性是短行里挤了多个操作词。
+// 阈值定在「短行 + 至少 2 个操作词」，单个操作词不算 ——
+// 否则「分享文件的三种方法」这类正文标题会被误删。
+const ACTION_WORDS = [
+  "点赞", "收藏", "分享", "举报", "评论", "关注", "转发", "打赏", "投币",
+  "登录", "注册", "下载", "扫一扫", "复制链接", "一键", "立减", "抵扣",
+  "上一篇", "下一篇", "展开全部", "收起", "返回顶部", "查看更多", "阅读全文",
+];
+// 整行都是站点样板，直接按前缀判定
+const BOILERPLATE_PREFIX =
+  /^(当前文章被以下社区和专栏收录|版权声明|本文链接|原文链接|热门文章|分类专栏|大家在看|相关推荐|推荐文章|最新评论|博客等级|个人简介|访问量|阅读量|抵扣说明|Copyright|©)/i;
+const COUNTER_LINE = /^[\d,.\s]+(点赞|收藏|评论|阅读|浏览|次)?$/;
+
+function isBoilerplate(line) {
+  if (!line) return true;
+  if (line.length <= 40 && BOILERPLATE_PREFIX.test(line)) return true;
+  if (line.length <= 20 && COUNTER_LINE.test(line)) return true;
+  if (line.length <= 40) {
+    let hits = 0;
+    for (const w of ACTION_WORDS) {
+      if (line.includes(w) && ++hits >= 2) return true;
+    }
+    // 单个操作词但整行几乎只有它：如「立减 ¥」「踩」
+    if (hits === 1 && line.length <= 8) return true;
+    if (hits === 0 && line.length <= 4 && !/[a-z0-9]/i.test(line)) return true;
+  }
+  return false;
+}
+
 async function extractPage(item) {
   try {
     const resp = await fetchTimeout(
@@ -621,25 +660,36 @@ async function extractPage(item) {
     }
     if (!ct.includes("text/html")) return null;
 
-    const parts = [];
+    // 按块收集：同一个 <p>/<li> 的多个文本片段要拼成一行再判噪点，
+    // 否则「点赞」和它前后的字会被拆开，行级过滤就失效了。
+    const lines = [];
+    let buf = "";
     let total = 0;
+    const flush = () => {
+      const line = buf.replace(/\s+/g, " ").trim();
+      buf = "";
+      if (!line || isBoilerplate(line)) return;
+      lines.push(line);
+      total += line.length;
+    };
+
     await new HTMLRewriter()
-      .on("script, style, noscript", { text: (t) => t.remove() })
-      .on("p, h1, h2, h3, h4, h5, h6, li, pre, blockquote", {
+      .on(NOISE_CONTAINERS, { element: (el) => el.remove() })
+      .on("p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, td, dd", {
+        element(el) {
+          flush();
+          el.onEndTag(() => flush());
+        },
         text(t) {
           if (total >= MAX_PAGE_CHARS) return;
-          parts.push(t.text);
-          total += t.text.length;
+          buf += t.text;
         },
       })
       .transform(resp)
       .text();
+    flush();
 
-    const text = parts
-      .join("\n")
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    const text = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
     return text ? { ...item, text: text.slice(0, MAX_PAGE_CHARS) } : null;
   } catch {
     return null;
