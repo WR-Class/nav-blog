@@ -81,6 +81,20 @@
       </div>
     </div>
 
+    <!-- 小店链接设置 -->
+    <div class="bg-white rounded-xl shadow p-4 mb-6">
+      <h2 class="font-bold text-slate-800 mb-3">🛍️ 吾荣小店链接</h2>
+      <label class="block text-sm text-slate-600 mb-1" for="shopUrl">小店地址（必须以 https:// 开头）</label>
+      <div class="flex flex-wrap gap-2 items-center">
+        <input id="shopUrl" type="url" inputmode="url" placeholder="https://pay.ldxp.cn/shop/XXXXXXXX"
+          class="flex-1 min-w-[240px] px-4 py-2 border-2 border-slate-200 rounded-lg focus:border-indigo-500 outline-none" />
+        <button id="shopSaveBtn" type="button" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-semibold hover:bg-indigo-700 whitespace-nowrap">保存链接</button>
+        <a id="shopTestLink" href="/api/go?id=shop" target="_blank" rel="noopener noreferrer" class="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">🔗 测试跳转</a>
+      </div>
+      <p class="text-xs text-slate-400 mt-2">💡 链动官方换地址后，在这里改一次即可 —— 页脚和右下角悬浮按钮的小店入口会同时更新，无需改代码。留空则使用内置的兜底地址。点「测试跳转」可确认新地址生效。</p>
+      <p id="shopCurrent" class="text-xs text-slate-500 mt-1"></p>
+    </div>
+
     <div id="cats" class="space-y-6"></div>
     <p id="emptyHint" class="text-center text-slate-400 py-12 hidden">还没有分类，点右上角「添加分类」开始。</p>
   </div>
@@ -465,8 +479,42 @@
         const opVal = $('#cardOpacityVal');
         if (opSlider) { opSlider.value = _cardOpacity; opVal.textContent = Math.round(_cardOpacity * 100) + '%'; }
         updateBgPreview();
+        const shopInput = $('#shopUrl');
+        const shopHint = $('#shopCurrent');
+        if (shopInput) shopInput.value = s.shopUrl || '';
+        if (shopHint) {
+          shopHint.textContent = s.shopUrl
+            ? '当前生效：' + s.shopUrl
+            : '当前未设置，使用内置兜底地址。';
+        }
       }
     }).catch(() => {});
+
+    // ---------- 小店链接 ----------
+    // 只提交 shopUrl 一个字段，后端按字段合并，不会碰背景图设置
+    const shopSaveBtn = $('#shopSaveBtn');
+    if (shopSaveBtn) {
+      shopSaveBtn.addEventListener('click', async () => {
+        const input = $('#shopUrl');
+        const value = input.value.trim();
+        // 前端先挡一次，省一个来回；后端仍会独立校验
+        if (value && !/^https:\/\/.+/i.test(value)) {
+          toast('小店链接必须以 https:// 开头', false);
+          input.focus();
+          return;
+        }
+        const saved = await saveBg({ shopUrl: value });
+        if (saved) {
+          const shopHint = $('#shopCurrent');
+          if (shopHint) {
+            shopHint.textContent = saved.shopUrl
+              ? '当前生效：' + saved.shopUrl
+              : '当前未设置，使用内置兜底地址。';
+          }
+          if (input) input.value = saved.shopUrl || '';
+        }
+      });
+    }
 
     // ---------- 分类卡片不透明度 ----------
     const cardOpacitySlider = $('#cardOpacity');
@@ -482,16 +530,19 @@
       saveBg({ backgroundUrl: bgUrl.value.trim(), backgroundDim: Number(bgDim.value), backgroundFit: bgFit.value, cardBgOpacity: op });
     });
 
+    // 只提交调用方给出的字段，后端按字段合并保存。
+    // 返回保存后的完整设置，便于调用方回显；失败返回 null。
     async function saveBg(settings) {
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PASSWORD },
         body: JSON.stringify(settings),
       });
-      const d = await res.json();
+      const d = await res.json().catch(() => ({}));
       if (res.ok && d.ok) {
         try { localStorage.setItem('site_settings', JSON.stringify(d.settings)); } catch (e) {}
         toast('✅ 已保存，全站生效');
+        return d.settings || null;
       } else if (res.status === 401) {
         toast('密码错误，请重新登录', false);
         sessionStorage.removeItem('nav_pwd');
@@ -499,6 +550,7 @@
       } else {
         toast('保存失败：' + (d.error || '未知错误'), false);
       }
+      return null;
     }
 
     $('#bgSaveBtn').addEventListener('click', () => {
