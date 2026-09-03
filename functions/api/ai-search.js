@@ -450,71 +450,63 @@ function bingGet(q) {
   );
 }
 
-// 一轮检索：轮流尝试各通道，累积到够用的相关结果再返回。
+// 一轮检索：轮流尝试各通道，但整个检索阶段的对外请求数有硬上限。
 //
 // 为什么是串行而不是并发：html.duckduckgo.com 与 lite.duckduckgo.com 虽然是
-// 两个主机名，但共用同一套反爬限流。同时发两个请求会让两边一起返回 202 挑战页，
-// 实测并发版本经常两路全废、最后掉到 Bing，只剩 1 条结果。
+// 两个主机名，但共用同一套反爬限流。同时发两个请求会让两边一起返回 202 挑战页。
 //
-// 为什么不能「第一个非空通道就收工」：某个通道偶尔只解析出 1 条相关结果
-// （被部分挑战，或 Bing 兜底本身相关性差）。那样答案只有单一来源，可信度不够。
-// 所以相关结果少于 MIN_RESULTS 时继续走下一个通道，把结果并起来。
-//
-// 为什么要在预算内反复重试：DDG 的 202 挑战是「立刻返回」而不是超时，
-// 一轮 5 个通道被全挡掉只花 2–3 秒，直接放弃就浪费了剩下十几秒预算，
-// 用户看到的是「没有检索到资料」。而实测同一个查询过一两秒重试就能拿到
-// 10 条正常结果 —— 挑战是间歇性的。所以只要预算没用完就带着递增退避继续试。
+// 为什么要限制请求总数（这是最关键的一条）：DDG 按出口 IP 限流，而 Worker 用的
+// 是 Cloudflare 机房的共享出口。曾经写过「预算内不停重试」的版本，把单次搜索的
+// 对外请求从 1–2 次放大到 20 多次，结果自己把配额烧光 —— 8 个查询里 3 个返回
+// 0 条来源，比不重试时更差。请求越省，每一个请求的成功率越高，也给下一位访客
+// 留下配额。所以现在是：拿到 MIN_RESULTS 就停，拿到 1–3 条也接受，
+// 只有完全空手才继续花配额。
 const MIN_RESULTS = 4;
+// 单次用户搜索允许的对外检索请求总数（含所有查询变体与兜底通道）
+const MAX_SEARCH_REQUESTS = 4;
 
-async function searchOnce(q, queryTokens, deadline) {
+async function searchOnce(q, queryTokens, state) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
-  // 一轮的顺序：主通道 → lite → 表单 POST → Bing 兜底
+  // 顺序：主通道 → lite → Bing 兜底。表单 POST 通道留给完全空手的情况
   const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlPost, bingGet];
-  // 每轮之间的退避，最后一个值用于后续所有轮次
-  const backoffs = [300, 900, 1800, 3000];
 
   const acc = [];
   const seen = new Set();
-
-  for (let round = 0; ; round++) {
-    for (const channel of channels) {
-      if (Date.now() >= deadline) return acc;
-      try {
-        for (const r of keep(await channel(q))) {
-          const key = cleanUrl(r.url);
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            acc.push(r);
-          }
+  for (let i = 0; i < channels.length; i++) {
+    if (state.used >= MAX_SEARCH_REQUESTS || Date.now() >= state.deadline) break;
+    if (i > 0) await sleep(300);
+    state.used++;
+    try {
+      for (const r of keep(await channels[i](q))) {
+        const key = cleanUrl(r.url);
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          acc.push(r);
         }
-      } catch {
-        /* 超时或网络错误，换下一个通道 */
       }
-      if (acc.length >= MIN_RESULTS) return acc;
+    } catch {
+      /* 超时或网络错误，换下一个通道 */
     }
-    // 一轮全被挡掉：还有预算就退避后重试，没有就交出已有结果
-    if (Date.now() >= deadline) return acc;
-    await sleep(backoffs[Math.min(round, backoffs.length - 1)]);
+    if (acc.length >= MIN_RESULTS) break;
   }
+  return acc;
 }
 
 async function searchWeb(query) {
   const direct = directUrlResults(query);
   const directUrls = new Set(direct.map((d) => d.url));
   const collector = createCollector();
-  const deadline = Date.now() + SEARCH_BUDGET_MS;
+  const state = { used: 0, deadline: Date.now() + SEARCH_BUDGET_MS };
 
   // 相关性判定始终以「用户原始问题」为准，不受查询扩展影响
   const queryTokens = tokenize(query);
 
-  // 原始问题先跑，拿够就收工；不够再错开时间补查扩展变体
+  // 原始问题先跑。只有完全空手时才用剩余配额试扩展变体 ——
+  // 已经拿到结果就不要再花请求，配额比多样性更宝贵。
   const variants = expandQueries(query);
   for (let i = 0; i < variants.length; i++) {
-    if (i > 0) {
-      if (collector.list.length >= MIN_RESULTS || Date.now() >= deadline) break;
-      await sleep(300);
-    }
-    const results = await searchOnce(variants[i], queryTokens, deadline).catch(() => []);
+    if (i > 0 && (collector.list.length > 0 || state.used >= MAX_SEARCH_REQUESTS)) break;
+    const results = await searchOnce(variants[i], queryTokens, state).catch(() => []);
     results.forEach((r) => collector.push(r));
     if (collector.list.length >= MAX_RESULTS) break;
   }
