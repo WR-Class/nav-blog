@@ -40,7 +40,9 @@ import Container from "@/components/container.astro";
     </div>
   </Container>
 
-  <style>
+  <!-- is:global 是必需的：答案 DOM 由 JS 在运行时注入，
+       Astro 默认的作用域样式不会命中这些元素。选择器全部以 .ai-answer 收窄。 -->
+  <style is:global>
     .ai-answer p { margin: 0.6em 0; }
     .ai-answer p.li { padding-left: 1em; }
     .ai-answer h1, .ai-answer h2, .ai-answer h3,
@@ -53,10 +55,10 @@ import Container from "@/components/container.astro";
     .ai-answer h2 { font-size: 1.25rem; }
     .ai-answer h3 { font-size: 1.1rem; }
     .ai-answer h4, .ai-answer h5, .ai-answer h6 { font-size: 1rem; }
-    .ai-answer a { color: #4f46e5; text-decoration: none; }
+    .ai-answer a { color: #4f46e5; text-decoration: none; word-break: break-word; }
     .ai-answer a:hover { text-decoration: underline; }
     .ai-answer strong { font-weight: 600; }
-    :global(.dark) .ai-answer a { color: #818cf8; }
+    .dark .ai-answer a { color: #818cf8; }
   </style>
 
   <script is:inline>
