@@ -93,7 +93,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const results = await searchWeb(query);
+    const results = await searchWeb(query, env);
 
     // 并发提取候选页正文
     const extracted = [];
@@ -450,6 +450,56 @@ function bingGet(q) {
   );
 }
 
+/* ---------------- 救援通道：真实浏览器 ---------------- */
+
+// Browser Run 绑定：在 Cloudflare 上跑一个真实 Chromium 去打开搜索页。
+//
+// 为什么需要它：普通 fetch 抓 DuckDuckGo 会间歇性收到 202 挑战页，正文里
+// 没有任何结果。那是「装成浏览器」和「就是浏览器」的区别 —— 实测真实
+// Chromium 每次都稳定拿到 10 条结果，从未被挑战。
+//
+// 为什么不把它当常规通道：免费额度是每天 10 分钟浏览器时间，且新建实例
+// 有每分钟上限（实测连续请求会撞 2001 Rate limit exceeded）。所以它只在
+// 普通抓取全被挡住时出场 —— 恰好就是原来会返回「没有检索到资料」的那种情况。
+//
+// quickAction 返回的是 Response，需要自己解 JSON；且不同版本可能返回
+// 完整信封 {success,result} 或直接返回数组，两种都要能处理。
+async function browserScrape(q, env) {
+  const br = env.BROWSER;
+  if (!br || typeof br.quickAction !== "function") return [];
+
+  const resp = await br.quickAction("scrape", {
+    url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
+    elements: [{ selector: "a.result__a" }, { selector: "a.result__snippet" }],
+    gotoOptions: { waitUntil: "domcontentloaded", timeout: 15000 },
+  });
+  if (!resp || !resp.ok) return [];
+
+  const body = await resp.json();
+  const payload = body && body.result !== undefined ? body.result : body;
+  const groups = Array.isArray(payload) ? payload : [];
+
+  const pick = (sel) => {
+    const g = groups.find((x) => x && x.selector === sel);
+    return (g && g.results) || [];
+  };
+  const links = pick("a.result__a");
+  const snippets = pick("a.result__snippet");
+
+  const out = [];
+  for (let i = 0; i < links.length; i++) {
+    const item = links[i] || {};
+    const attrs = item.attributes || [];
+    const hrefAttr = attrs.find((a) => a && a.name === "href");
+    const url = ddgUnwrap(hrefAttr && hrefAttr.value);
+    const title = String(item.text || "").trim();
+    if (!url || !/^https?:/.test(url) || !title) continue;
+    // 两个选择器各自按文档顺序返回，同序号即同一条结果
+    out.push({ url, title, snippet: String((snippets[i] || {}).text || "").trim() });
+  }
+  return out;
+}
+
 // 一轮检索：轮流尝试各通道，但整个检索阶段的对外请求数有硬上限。
 //
 // 为什么是串行而不是并发：html.duckduckgo.com 与 lite.duckduckgo.com 虽然是
@@ -492,7 +542,7 @@ async function searchOnce(q, queryTokens, state) {
   return acc;
 }
 
-async function searchWeb(query) {
+async function searchWeb(query, env) {
   const direct = directUrlResults(query);
   const directUrls = new Set(direct.map((d) => d.url));
   const collector = createCollector();
@@ -509,6 +559,17 @@ async function searchWeb(query) {
     const results = await searchOnce(variants[i], queryTokens, state).catch(() => []);
     results.forEach((r) => collector.push(r));
     if (collector.list.length >= MAX_RESULTS) break;
+  }
+
+  // 普通抓取彻底失败（全被 202 挑战挡住）时，才动用真实浏览器救一次。
+  // 这是原先返回「没有检索到可用的网页资料」的唯一场景。
+  if (collector.list.length === 0) {
+    try {
+      const rescued = await browserScrape(query, env);
+      rescued.filter((r) => isRelevant(queryTokens, r)).forEach((r) => collector.push(r));
+    } catch {
+      /* 浏览器额度用尽或超时：保持空结果，由上层给出诚实提示 */
+    }
   }
 
   const rest = collector.list
