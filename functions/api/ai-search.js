@@ -450,7 +450,7 @@ function bingGet(q) {
   );
 }
 
-// 一轮检索：依次尝试各通道，累积到够用的相关结果再返回。
+// 一轮检索：轮流尝试各通道，累积到够用的相关结果再返回。
 //
 // 为什么是串行而不是并发：html.duckduckgo.com 与 lite.duckduckgo.com 虽然是
 // 两个主机名，但共用同一套反爬限流。同时发两个请求会让两边一起返回 202 挑战页，
@@ -458,33 +458,44 @@ function bingGet(q) {
 //
 // 为什么不能「第一个非空通道就收工」：某个通道偶尔只解析出 1 条相关结果
 // （被部分挑战，或 Bing 兜底本身相关性差）。那样答案只有单一来源，可信度不够。
-// 所以拿到的相关结果少于 MIN_RESULTS 时继续走下一个通道，把结果并起来。
+// 所以相关结果少于 MIN_RESULTS 时继续走下一个通道，把结果并起来。
+//
+// 为什么要在预算内反复重试：DDG 的 202 挑战是「立刻返回」而不是超时，
+// 一轮 5 个通道被全挡掉只花 2–3 秒，直接放弃就浪费了剩下十几秒预算，
+// 用户看到的是「没有检索到资料」。而实测同一个查询过一两秒重试就能拿到
+// 10 条正常结果 —— 挑战是间歇性的。所以只要预算没用完就带着递增退避继续试。
 const MIN_RESULTS = 4;
 
 async function searchOnce(q, queryTokens, deadline) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
-  // 顺序：主通道 → lite → 主通道重试 → 表单 POST → Bing 兜底
-  const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlGet, ddgHtmlPost, bingGet];
+  // 一轮的顺序：主通道 → lite → 表单 POST → Bing 兜底
+  const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlPost, bingGet];
+  // 每轮之间的退避，最后一个值用于后续所有轮次
+  const backoffs = [300, 900, 1800, 3000];
 
   const acc = [];
   const seen = new Set();
-  for (let i = 0; i < channels.length; i++) {
-    if (Date.now() >= deadline) break;
-    if (i > 0) await sleep(300);
-    try {
-      for (const r of keep(await channels[i](q))) {
-        const key = cleanUrl(r.url);
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          acc.push(r);
+
+  for (let round = 0; ; round++) {
+    for (const channel of channels) {
+      if (Date.now() >= deadline) return acc;
+      try {
+        for (const r of keep(await channel(q))) {
+          const key = cleanUrl(r.url);
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            acc.push(r);
+          }
         }
+      } catch {
+        /* 超时或网络错误，换下一个通道 */
       }
-    } catch {
-      /* 超时或网络错误，换下一个通道 */
+      if (acc.length >= MIN_RESULTS) return acc;
     }
-    if (acc.length >= MIN_RESULTS) break;
+    // 一轮全被挡掉：还有预算就退避后重试，没有就交出已有结果
+    if (Date.now() >= deadline) return acc;
+    await sleep(backoffs[Math.min(round, backoffs.length - 1)]);
   }
-  return acc;
 }
 
 async function searchWeb(query) {
