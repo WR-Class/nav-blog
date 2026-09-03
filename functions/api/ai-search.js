@@ -356,9 +356,18 @@ const BROWSER_HEADERS = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 单个通道的超时。原来是 12s，但最坏情况会叠加：
+// 3 个查询变体 × 5 个通道 × 12s = 180s。实测确实出现过 116s 才返回。
+const CHANNEL_TIMEOUT_MS = 7000;
+// 整个检索阶段的总预算。用完就带着已有结果进入下一步，
+// 宁可来源少一点，也不让用户干等。正文提取和模型生成还需要时间。
+const SEARCH_BUDGET_MS = 20000;
+
 async function scrape(url, opts, itemSel, snippetSel, unwrap) {
-  const resp = await fetchTimeout(url, opts, 12000);
-  if (resp.status >= 400) {
+  const resp = await fetchTimeout(url, opts, CHANNEL_TIMEOUT_MS);
+  // 4xx/5xx 是明确拒绝；202 是 DuckDuckGo 的反爬挑战页，正文里没有结果。
+  // 两种都直接放弃这个通道，不浪费时间解析。
+  if (resp.status >= 400 || resp.status === 202) {
     await resp.text();
     return [];
   }
@@ -452,7 +461,7 @@ function bingGet(q) {
 // 所以拿到的相关结果少于 MIN_RESULTS 时继续走下一个通道，把结果并起来。
 const MIN_RESULTS = 4;
 
-async function searchOnce(q, queryTokens) {
+async function searchOnce(q, queryTokens, deadline) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
   // 顺序：主通道 → lite → 主通道重试 → 表单 POST → Bing 兜底
   const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlGet, ddgHtmlPost, bingGet];
@@ -460,7 +469,8 @@ async function searchOnce(q, queryTokens) {
   const acc = [];
   const seen = new Set();
   for (let i = 0; i < channels.length; i++) {
-    if (i > 0) await sleep(400);
+    if (Date.now() >= deadline) break;
+    if (i > 0) await sleep(300);
     try {
       for (const r of keep(await channels[i](q))) {
         const key = cleanUrl(r.url);
@@ -481,6 +491,7 @@ async function searchWeb(query) {
   const direct = directUrlResults(query);
   const directUrls = new Set(direct.map((d) => d.url));
   const collector = createCollector();
+  const deadline = Date.now() + SEARCH_BUDGET_MS;
 
   // 相关性判定始终以「用户原始问题」为准，不受查询扩展影响
   const queryTokens = tokenize(query);
@@ -489,10 +500,10 @@ async function searchWeb(query) {
   const variants = expandQueries(query);
   for (let i = 0; i < variants.length; i++) {
     if (i > 0) {
-      if (collector.list.length >= MIN_RESULTS) break;
-      await sleep(500);
+      if (collector.list.length >= MIN_RESULTS || Date.now() >= deadline) break;
+      await sleep(300);
     }
-    const results = await searchOnce(variants[i], queryTokens).catch(() => []);
+    const results = await searchOnce(variants[i], queryTokens, deadline).catch(() => []);
     results.forEach((r) => collector.push(r));
     if (collector.list.length >= MAX_RESULTS) break;
   }
