@@ -190,7 +190,7 @@ const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
         google: 'https://www.google.com/search?q=',
         bing: 'https://www.bing.com/search?q=',
         baidu: 'https://www.baidu.com/s?wd=',
-        ai: 'https://ai.wurong.cc.cd/?q=',
+        ai: '/ai-search?q=',
         duckduckgo: 'https://duckduckgo.com/?q=',
         github: 'https://github.com/search?q=',
       };
@@ -249,9 +249,13 @@ const ADSENSE_CLIENT = ""; // 例如 "ca-pub-1234567890123456"
         const q = input.value.trim();
         if (!q) return;
         const engine = engineSel.value;
+        // AI 搜索是站内页面：同标签打开，且网址也交给 AI 去读那个页面
+        if (engine === 'ai') {
+          window.location.href = ENGINES.ai + encodeURIComponent(q);
+          return;
+        }
         let dest;
-        // AI 搜索时整段内容都交给 AI（包括网址，AI 会去读那个页面）
-        if (engine !== 'ai' && looksLikeUrl(q)) {
+        if (looksLikeUrl(q)) {
           dest = /^https?:\/\//i.test(q) ? q : 'https://' + q;
         } else {
           dest = (ENGINES[engine] || ENGINES.google) + encodeURIComponent(q);
