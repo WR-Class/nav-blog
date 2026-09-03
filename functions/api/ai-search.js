@@ -334,6 +334,41 @@ function isRelevant(queryTokens, item) {
   return hit >= (queryTokens.size <= 2 ? 1 : 2);
 }
 
+// 疑问词与套话：出现在查询里但不携带检索意图。
+// 计算「相关度」时必须排除它们，否则 "M365 E3 E5账号是什么" 里的
+// 是什/什么/号是 会把分母撑大，真正命中 E3/E5 的官方文档反而显得不相关。
+const STOP_TOKENS = new Set([
+  "是什", "什么", "么意", "意思", "怎么", "么办", "么样", "如何", "为什",
+  "哪些", "有哪", "哪个", "多少", "是多", "可以", "需要", "一下", "求解",
+  "what", "how", "why", "the", "and", "for", "with", "from", "that", "this", "does",
+]);
+
+// 相关度 = 命中的实义词 / 查询的实义词总数。
+//
+// 为什么需要它：isRelevant 的「命中 2 个词」是绝对门槛，
+// 查询 "2026年 安全生产 考试题库 答案" 有 9 个词，一个
+// 「2026年国家网络安全宣传周」的政府页面靠 2026 + 安全 就能过关。
+// DDG 被限流时回的正是这种「状态码 200、内容全不相干」的降级结果。
+// 改成看比例，这类页面只有 0.25，真正的题库页面接近 1.0，一刀切得很干净。
+function informativeTokens(queryTokens) {
+  const out = new Set();
+  for (const t of queryTokens) {
+    if (STOP_TOKENS.has(t)) continue;
+    // 单个汉字（如 "2026年" 里的 年）信息量太低，不计入分母
+    if (t.length === 1 && !/[a-z0-9]/i.test(t)) continue;
+    out.add(t);
+  }
+  return out.size ? out : queryTokens;
+}
+
+function scoreOf(infoTokens, item) {
+  if (!infoTokens.size) return 0;
+  const hay = tokenize(`${item.title || ""} ${item.snippet || ""} ${item.url || ""}`);
+  let hit = 0;
+  for (const t of infoTokens) if (hay.has(t)) hit++;
+  return hit / infoTokens.size;
+}
+
 /* ---------------- 检索源（均无需 API Key） ---------------- */
 
 // 实测结论（Worker 出口，2026-09）：
@@ -528,6 +563,10 @@ async function browserScrape(q, env) {
 const MIN_RESULTS = 4;
 // 单次用户搜索允许的对外检索请求总数（含所有查询变体与兜底通道）
 const MAX_SEARCH_REQUESTS = 4;
+// 相关度下限：低于这个比例的结果几乎肯定是限流后的降级结果。
+// 定在 0.3 是因为实测「2026年国家网络安全宣传周」对
+// "2026年 安全生产 考试题库 答案" 只有 0.25，而真正的题库页面在 0.7 以上。
+const WEAK_SCORE = 0.3;
 
 async function searchOnce(q, queryTokens, state) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
@@ -575,24 +614,42 @@ async function searchWeb(query, env) {
     if (collector.list.length >= MAX_RESULTS) break;
   }
 
-  // 普通抓取结果太少时，用真实浏览器补一次。
+  // 有效结果不够时，用真实浏览器补一次。
   //
-  // 触发条件是「少于 MIN_RESULTS」而不是「完全为空」：只有 1–2 条来源的答案
-  // 同样不可信，而这正是用户能直接感觉到的不稳定。实测真实 Chromium 从未被
-  // 挑战，每次稳定 10 条，所以它既救「0 条」也救「太少」。
+  // 判定的是「够不够强」而不是「有没有」：被限流时 DDG 会回一批状态码 200
+  // 但内容完全不相干的页面（问题库返回政府工作报告、节假日通知），
+  // 数量看着够，答案却是空的。这种「假成功」比直接失败更难发现，
+  // 所以先按相关度筛一遍，只数真正像样的结果。
   //
+  // 实测真实 Chromium 从未被挑战，每次稳定 10 条。
   // 额度：免费套餐每天 10 分钟浏览器时间，单次 scrape 约 2 秒，约合 300 次/天。
-  // 正常查询根本不会走到这里，只有被挑战时才花这份额度。用尽后静默降级。
-  if (collector.list.length < MIN_RESULTS) {
+  // 正常查询不会走到这里，用尽后静默降级，不影响主链路。
+  const infoTokens = informativeTokens(queryTokens);
+  const strongBefore = collector.list.filter((r) => scoreOf(infoTokens, r) >= WEAK_SCORE).length;
+  if (strongBefore < MIN_RESULTS) {
     try {
-      const rescued = await withTimeout(browserScrape(query, env), BROWSER_TIMEOUT_MS, []);
-      rescued.filter((r) => isRelevant(queryTokens, r)).forEach((r) => collector.push(r));
+      const extra = await withTimeout(browserScrape(query, env), BROWSER_TIMEOUT_MS, []);
+      extra.filter((r) => isRelevant(queryTokens, r)).forEach((r) => collector.push(r));
     } catch {
       /* 浏览器额度用尽或超时：保留已有结果，由上层给出诚实提示 */
     }
   }
 
-  const rest = collector.list
+  // 按相关度排序，并丢掉明显跑偏的结果。
+  //
+  // 排序而不只是过滤：证据顺序决定 [1] 指向谁，也决定字数上限先截掉谁。
+  //
+  // 门槛的两段式设计：只有在「手里至少有一条像样结果」时才启用过滤，
+  // 门槛取最高分的一半。若整批结果分数都低（冷门问题、长句提问只命中一部分
+  // 词面），就不过滤，只排序 —— 固定门槛会把唯一的几条有效结果也删掉，
+  // 反而制造出空答案。这时宁可让模型基于弱证据保守作答。
+  const scored = collector.list.map((r) => ({ r, s: scoreOf(infoTokens, r) }));
+  scored.sort((a, b) => b.s - a.s);
+  const best = scored.length ? scored[0].s : 0;
+  const floor = best >= WEAK_SCORE ? Math.max(WEAK_SCORE, best * 0.5) : 0;
+  const ordered = scored.filter((x) => x.s >= floor).map((x) => x.r);
+
+  const rest = ordered
     .filter((r) => !directUrls.has(r.url))
     .slice(0, Math.max(0, MAX_RESULTS - direct.length));
   return direct.concat(rest);
