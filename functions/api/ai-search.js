@@ -513,7 +513,7 @@ async function browserScrape(q, env) {
 // 只有完全空手才继续花配额。
 const MIN_RESULTS = 4;
 // 单次用户搜索允许的对外检索请求总数（含所有查询变体与兜底通道）
-const MAX_SEARCH_REQUESTS = 4;
+const MAX_SEARCH_REQUESTS = 0; // TEMP: 强制走浏览器救援通道，验证后改回 4
 
 async function searchOnce(q, queryTokens, state) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
