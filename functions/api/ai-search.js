@@ -348,6 +348,16 @@ const STOP_TOKENS = new Set([
   "what", "how", "why", "the", "and", "for", "with", "from", "that", "this", "does",
 ]);
 
+// 页面里是否出现中日韩文字。用于跨语言相关度：
+// 纯英文页面永远匹配不上中文词，若中文词仍计入分母，
+// "Nginx 反向代理 websocket 配置" 的英文结果只有 0.33，
+// 会被「最高分一半」的排序门槛整体切掉。
+function textHasCJK(s) {
+  return /[\u4e00-\u9fff\u3040-\u30ff]/.test(String(s || ""));
+}
+
+const CJK_TOKEN = /[\u4e00-\u9fff\u3040-\u30ff]/;
+
 // 相关度 = 命中的实义词 / 查询的实义词总数。
 //
 // 为什么需要它：isRelevant 的「命中 2 个词」是绝对门槛，
@@ -355,6 +365,12 @@ const STOP_TOKENS = new Set([
 // 「2026年国家网络安全宣传周」的政府页面靠 2026 + 安全 就能过关。
 // DDG 被限流时回的正是这种「状态码 200、内容全不相干」的降级结果。
 // 改成看比例，这类页面只有 0.25，真正的题库页面接近 1.0，一刀切得很干净。
+//
+// 跨语言：页面不含中文时，查询里的中文词不进分母 —— 英文页面
+// 永远匹配不上中文词，把它算进分母只会把英文结果整体压成低分。
+// "Nginx 反向代理 websocket 配置" 的英文页面对两个技术词是满分 (1.0)，
+// 而不是原来的 2/6 (0.33)。中文页面仍按全部词计算，安全考试的
+// 政府垃圾页（0.25）不会因为这条规则混进来 —— 它含中文。
 function informativeTokens(queryTokens) {
   const out = new Set();
   for (const t of queryTokens) {
@@ -368,10 +384,23 @@ function informativeTokens(queryTokens) {
 
 function scoreOf(infoTokens, item) {
   if (!infoTokens.size) return 0;
-  const hay = tokenize(`${item.title || ""} ${item.snippet || ""} ${item.url || ""}`);
+  const body = `${item.title || ""} ${item.snippet || ""}`;
+  const pageCJK = textHasCJK(body);
+  const hay = tokenize(`${body} ${item.url || ""}`);
   let hit = 0;
-  for (const t of infoTokens) if (hay.has(t)) hit++;
-  return hit / infoTokens.size;
+  let denom = 0;
+  for (const t of infoTokens) {
+    // 中文词只在页面含中文时才可能命中，也才计入分母
+    if (CJK_TOKEN.test(t) && !pageCJK) continue;
+    // 英文页面不能只凭年份（2026、11 这类纯数字词）得分 ——
+    // "2026 Cybersecurity Awareness Week" 对考试题库查询
+    // 除了年份什么都没命中，原来是 1.0，属于纯数字锚点假阳性
+    if (!pageCJK && !CJK_TOKEN.test(t) && /^\d+$/.test(t)) continue;
+    denom++;
+    if (hay.has(t)) hit++;
+  }
+  if (!denom) return 0;
+  return hit / denom;
 }
 
 /* ---------------- 检索源 ---------------- */
@@ -712,8 +741,17 @@ async function searchWeb(query, env) {
   // 门槛取最高分的一半。若整批结果分数都低（冷门问题、长句提问只命中一部分
   // 词面），就不过滤，只排序 —— 固定门槛会把唯一的几条有效结果也删掉，
   // 反而制造出空答案。这时宁可让模型基于弱证据保守作答。
-  const scored = collector.list.map((r) => ({ r, s: scoreOf(infoTokens, r) }));
-  scored.sort((a, b) => b.s - a.s);
+  //
+  // 排序加中文优先：中文问题的读者绝大多数是中文用户，同等分数时
+  // 中文页面排在前面（纯英文页面 ×0.9 后参与排序）。过滤仍按原始分，
+  // 英文页面不会因语言偏好被扔掉 —— 技术文档经常只有英文版。
+  const queryCJK = Array.from(infoTokens).some((t) => CJK_TOKEN.test(t));
+  const scored = collector.list.map((r) => ({
+    r,
+    s: scoreOf(infoTokens, r),
+    rank: scoreOf(infoTokens, r) * (queryCJK && !textHasCJK(`${r.title || ""} ${r.snippet || ""}`) ? 0.9 : 1),
+  }));
+  scored.sort((a, b) => b.rank - a.rank);
   const best = scored.length ? scored[0].s : 0;
   const floor = best >= WEAK_SCORE ? Math.max(WEAK_SCORE, best * 0.5) : 0;
   const ordered = scored.filter((x) => x.s >= floor).map((x) => x.r);
