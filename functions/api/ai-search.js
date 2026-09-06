@@ -4,6 +4,11 @@
 // 用法：POST { "query": "问题或网址" }
 // 返回：{ "answer": "...", "sources": [{id,title,url,domain}], "stored": false }
 //
+// 检索链路（2026-09 起）：
+//   主源 Keenable API（env.KEENABLE_API_KEY，100k 次/月免费额度）
+//   兜底 DDG 无 key 抓取（共享出口 IP，间歇性被 202 挑战）
+//   救援 Cloudflare Browser Run（真实 Chromium，仅在主源+兜底都不足时）
+//
 // 隐私：不保存任何搜索内容。KV 只写入「IP + 请求时间戳」用于频控，
 //       与站内 /api/translate 的做法一致，不含查询词、网页内容或答案。
 //
@@ -369,7 +374,51 @@ function scoreOf(infoTokens, item) {
   return hit / infoTokens.size;
 }
 
-/* ---------------- 检索源（均无需 API Key） ---------------- */
+/* ---------------- 检索源 ---------------- */
+
+// 主源：Keenable API（100,000 次/月免费额度，10 QPS）。
+// key 存在 Pages 环境变量 KEENABLE_API_KEY 里。
+// 结果字段：title / url / description / snippet / published_at / acquired_at。
+const KEENABLE_URL = "https://api.keenable.ai/v1/search";
+
+// 兜底：DuckDuckGo（无 key，但共享出口 IP 被限流时会回 202 挑战页）。
+// 仅在 Keenable 429/5xx/超时 或 key 未配置时使用。
+async function keenableSearch(q, env) {
+  const key = env.KEENABLE_API_KEY;
+  if (!key) throw new Error("KEENABLE_API_KEY 未配置");
+
+  const resp = await fetchTimeout(
+    KEENABLE_URL,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": key,
+      },
+      body: JSON.stringify({
+        query: q,
+        max_results: MAX_RESULTS + 2, // 多拿几条，过滤后仍够 MIN_RESULTS
+      }),
+    },
+    CHANNEL_TIMEOUT_MS
+  );
+
+  // 429（限流）/ 5xx / 401（key 失效）都走兜底
+  if (!resp.ok) {
+    await resp.text();
+    throw new Error("keenable HTTP " + resp.status);
+  }
+
+  const data = await resp.json();
+  // Keenable 的 snippet 里 \n 是 JSON 标准转义，JSON.parse 后已是真实换行；
+  // collector.push 会做 \s+ 折叠，这里只需取非空字段
+  return (data.results || []).map((r) => ({
+    title: String(r.title || "").trim(),
+    url: String(r.url || ""),
+    snippet: String(r.description || r.snippet || "").trim(),
+  }));
+}
+
 
 // 实测结论（Worker 出口，2026-09）：
 //   DuckDuckGo html 端点 + 完整浏览器请求头 → 命中真正的内容页
@@ -568,19 +617,39 @@ const MAX_SEARCH_REQUESTS = 4;
 // "2026年 安全生产 考试题库 答案" 只有 0.25，而真正的题库页面在 0.7 以上。
 const WEAK_SCORE = 0.3;
 
-async function searchOnce(q, queryTokens, state) {
+async function searchOnce(q, queryTokens, state, env) {
   const keep = (list) => (list || []).filter((r) => isRelevant(queryTokens, r));
-  // 顺序：主通道 → lite → Bing 兜底。表单 POST 通道留给完全空手的情况
-  const channels = [ddgHtmlGet, ddgLiteGet, ddgHtmlPost, bingGet];
+  // 顺序：Keenable API（稳定）→ DDG 兜底（无 key，可能被限流）
+  const fallbackChannels = [ddgHtmlGet, ddgLiteGet, ddgHtmlPost, bingGet];
 
   const acc = [];
   const seen = new Set();
-  for (let i = 0; i < channels.length; i++) {
+
+  // 先试主源 Keenable。成功即返回，不走兜底。
+  // state.used 计的是「省着用」的请求数：Keenable 有独立额度
+  // （100k/月），不占用 DDG 共享出口的配额，所以只在走兜底时计数。
+  try {
+    const list = await withTimeout(keenableSearch(q, env), CHANNEL_TIMEOUT_MS + 1000, []);
+    for (const r of keep(list)) {
+      const key = cleanUrl(r.url);
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        acc.push(r);
+      }
+    }
+    if (acc.length >= MIN_RESULTS) return acc;
+  } catch {
+    /* Keenable 失败（429/5xx/key 未配置/超时），走 DDG 兜底 */
+  }
+
+  // Keenable 拿到但不足 MIN_RESULTS 时，也算它成功了一半：
+  // 继续用兜底通道补，但结果会和 Keenable 的合并（去重靠 seen）
+  for (let i = 0; i < fallbackChannels.length; i++) {
     if (state.used >= MAX_SEARCH_REQUESTS || Date.now() >= state.deadline) break;
     if (i > 0) await sleep(300);
     state.used++;
     try {
-      for (const r of keep(await channels[i](q))) {
+      for (const r of keep(await fallbackChannels[i](q))) {
         const key = cleanUrl(r.url);
         if (key && !seen.has(key)) {
           seen.add(key);
@@ -609,7 +678,7 @@ async function searchWeb(query, env) {
   const variants = expandQueries(query);
   for (let i = 0; i < variants.length; i++) {
     if (i > 0 && (collector.list.length > 0 || state.used >= MAX_SEARCH_REQUESTS)) break;
-    const results = await searchOnce(variants[i], queryTokens, state).catch(() => []);
+    const results = await searchOnce(variants[i], queryTokens, state, env).catch(() => []);
     results.forEach((r) => collector.push(r));
     if (collector.list.length >= MAX_RESULTS) break;
   }
